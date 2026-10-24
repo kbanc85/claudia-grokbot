@@ -1,1 +1,1 @@
-commit_id,direction,person_id,what,due,status,source_link,created,closed
+commit_id,direction,person_id,what,due,due_hint,status,source_link,created,closed

@@ -26,6 +26,36 @@ BOT = "example-test-bot"
 
 
 def run_ledger(home: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    # Inline --approved injection (tests/ may not be on path from example/).
+    no_approved = {
+        "init",
+        "check",
+        "export-brain",
+        "build-brain",
+        "backups",
+        "doctor",
+        "propose-links",
+        "snapshot",
+        "cleanup-half-built",
+    }
+    subcommands = no_approved | {
+        "add", "update", "health", "close", "merge", "forget", "restore", "apply-links",
+    }
+    value_flags = {"--home", "--bot-id", "--ledger", "--backup-keep", "--approved", "--rule"}
+    args_list = list(args)
+    if "--approved" not in args_list:
+        i = 0
+        while i < len(args_list):
+            tok = args_list[i]
+            if tok in subcommands:
+                if tok not in no_approved:
+                    val = "no-approval-needed" if tok == "health" else "yes"
+                    args_list = args_list[:i] + ["--approved", val] + args_list[i:]
+                break
+            if tok in value_flags:
+                i += 2
+                continue
+            i += 1
     cmd = [
         sys.executable,
         str(SCRIPT),
@@ -33,7 +63,7 @@ def run_ledger(home: Path, *args: str, check: bool = True) -> subprocess.Complet
         str(home),
         "--bot-id",
         BOT,
-        *args,
+        *args_list,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if check and proc.returncode != 0:

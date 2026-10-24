@@ -2,6 +2,19 @@
 
 Made with Grok Bot.
 
+## 1.1.3 - 2026-10-24
+
+Install reliability, honest approvals, smarter backups, and better promise catch:
+
+- Copy into the persistent store without needing file metadata (timestamps or permissions)
+- `doctor` and `cleanup-half-built` for half-built homes; first_run probes the home before success
+- Brain Page keeps the coverage line on publish (`coverage` on the Ledger type)
+- `propose-links` / `apply-links` so people and projects get connected after the owner says yes
+- Scanner catches everyday promise wording and can flag `needs_due` when no date is given
+- Log `approved_by_owner` must be passed on writes (`yes`, `standing-rule`, `no-approval-needed`, or `pending`)
+- Named `snapshot --label` plus smarter backup retention (first, named, daily, weekly, recent)
+- Optional owner setting `dateless_promises` (default off; Kamil decides)
+
 ## 1.1.2 - 2026-10-24
 
 Live Claudia's Brain Page for every installed copy (VERSION bump so 1.1.1 installs update):

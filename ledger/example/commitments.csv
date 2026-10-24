@@ -1,3 +1,3 @@
-commit_id,direction,person_id,what,due,status,source_link,created,closed
-C-0001,I owe,P-0001,Send launch draft,2026-10-25,open,example,2026-10-24,
-C-0002,owed to me,P-0002,Intro to Harbor board,2026-10-20,open,example,2026-10-24,
+commit_id,direction,person_id,what,due,due_hint,status,source_link,created,closed
+C-0001,I owe,P-0001,Send launch draft,2026-10-25,,open,example,2026-10-24,
+C-0002,owed to me,P-0002,Intro to Harbor board,2026-10-20,,open,example,2026-10-24,

@@ -19,6 +19,7 @@ jobs:
 
       - name: Unit tests
         run: |
+          python3 -m unittest discover tests
           python3 -m unittest discover -s ledger/example -p 'test_*.py' -v
           python3 -m unittest discover -s templates -p 'test_*.py' -v
           python3 -m unittest discover -s scan -p 'test_*.py' -v

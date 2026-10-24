@@ -62,7 +62,7 @@ This repository is the **hosted backend** every installed Claudia downloads and 
 
 | Path | Purpose |
 |------|---------|
-| `ledger/claudia_ledger.py` | Stdlib CLI: init, add/update (incl. commitment), close, merge, forget, health snapshot, backups/restore, check, export-brain, build-brain |
+| `ledger/claudia_ledger.py` | Stdlib CLI: init, add/update (incl. commitment), close, merge, forget, health snapshot, backups/restore/snapshot, doctor, propose-links/apply-links, check, export-brain, build-brain |
 | `scan/claudia_scan.py` | Propose commitment candidates from normalized JSONL (bot judges and records) |
 | `templates/` | Message shells + renderer for morning brief, catch, meditate, weekly review, welcome |
 | `update/claudia_update.py` | Version check, MANIFEST.sha256 verify, atomic self-update |
@@ -81,6 +81,9 @@ Claudia is based on [claudia.aiadopters.club](https://claudia.aiadopters.club) a
 ## Tests
 
 ```bash
+# One-command suite for this release's regressions:
+python3 -m unittest discover tests
+# Also run package-local suites (CI runs all of these):
 python3 -m unittest discover -s ledger/example -p 'test_*.py' -v
 python3 -m unittest discover -s templates -p 'test_*.py' -v
 python3 -m unittest discover -s scan -p 'test_*.py' -v

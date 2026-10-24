@@ -1487,7 +1487,7 @@ const LEDGER: Ledger = {
 
 // Kept outside the data block so build-brain (which rewrites only the block above) never drops them.
 const UPDATED: string = LEDGER.generated;
-const COVERAGE: string = (LEDGER as Ledger & { coverage?: string }).coverage ?? (LEDGER.example ? "Example data: every person, org and project here is made up. Yours is rebuilt from your Claudia Ledger." : "");
+const COVERAGE: string = LEDGER.coverage ?? (LEDGER.example ? "Example data: every person, org and project here is made up. Yours is rebuilt from your Claudia Ledger." : "");
 
 type Person = { id: string; name: string; org_id: string | null; role: string; network: string; relationship: string; cadence_days: number; last_contact: string; days_since: number; health: string; city: string; how_met: string };
 type Org = { id: string; name: string };
@@ -1495,7 +1495,7 @@ type Project = { id: string; name: string; org_id: string; status: string };
 type Link = { from_id: string; to_id: string; type: string; basis: string; source: string };
 type Commitment = { id: string; direction: string; person_id: string; what: string; due: string; status: string; source_link: string };
 type Interaction = { id: string; date: string; person_id: string; channel: string; actor: string; summary: string; source_link: string };
-type Ledger = { generated: string; example: boolean; owner?: { name: string }; people: Person[]; orgs: Org[]; projects: Project[]; links: Link[]; commitments: Commitment[]; interactions: Interaction[] };
+type Ledger = { generated: string; example: boolean; owner?: { name: string }; coverage?: string; people: Person[]; orgs: Org[]; projects: Project[]; links: Link[]; commitments: Commitment[]; interactions: Interaction[] };
 type Kind = "owner" | "person" | "org" | "project";
 type GEdge = { from_id: string; to_id: string; type: string; basis: string; kind: "link" | "owner" | "commit"; commit?: Commitment };
 type GNode = { id: string; label: string; kind: Kind; health: string | null; network: string | null; weight: number; x: number; y: number; r: number; ph: number };

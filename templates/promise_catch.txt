@@ -1,0 +1,7 @@
+# Made with Grok Bot.
+# Placeholders: count_total, count_i_owe, count_owed_to_me, count_people,
+# top_items, brain_link, ask_line
+First catch: {count_total} promises ({count_i_owe} you owe, {count_owed_to_me} owed to you), {count_people} people.
+{top_items}
+{brain_link}
+{ask_line}

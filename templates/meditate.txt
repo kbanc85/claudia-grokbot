@@ -1,0 +1,7 @@
+# Made with Grok Bot.
+# Placeholders: gap_line, proposed_summary, pattern, page_link
+Today's gap: {gap_line}
+Proposed: {proposed_summary}
+Pattern: {pattern}
+{page_link}
+Approve all, pick some, or tell me what to change?

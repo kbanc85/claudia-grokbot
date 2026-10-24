@@ -1,0 +1,98 @@
+{
+  "_note": "Made with Grok Bot. Fictional expected promises for eval items.",
+  "owner_names": ["Sam Chen"],
+  "owner_emails": ["sam.chen@example.com"],
+  "positives": [
+    {
+      "item_id": "e01",
+      "direction": "I owe",
+      "what_contains": ["launch kit"],
+      "due": "2026-10-23"
+    },
+    {
+      "item_id": "e02",
+      "direction": "I owe",
+      "what_contains": ["deck"],
+      "due": "2026-10-22"
+    },
+    {
+      "item_id": "e03",
+      "direction": "I owe",
+      "what_contains": ["pricing"],
+      "due": "2026-10-21"
+    },
+    {
+      "item_id": "e04",
+      "direction": "I owe",
+      "what_contains": ["forecast"],
+      "due": "2026-10-26"
+    },
+    {
+      "item_id": "e05",
+      "direction": "I owe",
+      "what_contains": ["intro"],
+      "due": "2026-10-20"
+    },
+    {
+      "item_id": "e06",
+      "direction": "owed to me",
+      "what_contains": ["contract", "redline"],
+      "due": "2026-10-24"
+    },
+    {
+      "item_id": "e07",
+      "direction": "I owe",
+      "what_contains": ["frame"],
+      "due": "2026-10-19"
+    },
+    {
+      "item_id": "e08",
+      "direction": "I owe",
+      "what_contains": ["checklist"],
+      "due": "2026-10-22"
+    },
+    {
+      "item_id": "e09",
+      "direction": "I owe",
+      "what_contains": ["logo"],
+      "due": "2026-10-23"
+    },
+    {
+      "item_id": "e10",
+      "direction": "I owe",
+      "what_contains": ["agenda"],
+      "due": "2026-10-16"
+    },
+    {
+      "item_id": "e11",
+      "direction": "I owe",
+      "what_contains": ["briefing", "memo"],
+      "due": "2026-10-22"
+    },
+    {
+      "item_id": "e12",
+      "direction": "I owe",
+      "what_contains": ["invoice"],
+      "due": "2026-10-20"
+    },
+    {
+      "item_id": "e13",
+      "direction": "I owe",
+      "what_contains": ["scorecard"],
+      "due": "2026-10-26"
+    },
+    {
+      "item_id": "e14",
+      "direction": "I owe",
+      "what_contains": ["review", "brief"],
+      "due": "2026-10-20"
+    },
+    {
+      "item_id": "e15",
+      "direction": "I owe",
+      "what_contains": ["timeline"],
+      "due": "2026-10-23"
+    }
+  ],
+  "negatives": ["n01", "n02", "n03", "n04", "n05", "n06", "n07", "n08", "n09", "n10"]
+}

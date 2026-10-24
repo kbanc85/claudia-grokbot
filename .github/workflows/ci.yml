@@ -1,0 +1,37 @@
+# Made with Grok Bot.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests
+        run: |
+          python3 -m unittest discover -s ledger/example -p 'test_*.py' -v
+          python3 -m unittest discover -s templates -p 'test_*.py' -v
+          python3 -m unittest discover -s scan -p 'test_*.py' -v
+          python3 -m unittest discover -s update -p 'test_*.py' -v
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Scanner eval (precision/recall thresholds)
+        run: python3 evals/run_eval.py
+
+      - name: First-run smoke (local checkout)
+        run: |
+          export CLAUDIA_HOME="$RUNNER_TEMP/claudia-ci-bot"
+          export CLAUDIA_BOT_ID="ci-bot"
+          bash setup/first_run.sh --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID"
+          # Re-run must stay idempotent and keep data
+          bash setup/first_run.sh --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID"

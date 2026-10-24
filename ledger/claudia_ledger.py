@@ -4,15 +4,12 @@
 
 Python 3 standard library only. The bot is the operator of this tool.
 
-Download (from the hosted repo):
-  curl -fsSL -o claudia_ledger.py \\
-    https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/claudia_ledger.py
+Download (from the hosted repo) into $CLAUDIA_HOME/tools/, then:
 
-Quick start:
-  python3 claudia_ledger.py --ledger /workspace/claudia-ledger init
-  python3 claudia_ledger.py --ledger DIR check
-  python3 claudia_ledger.py --ledger DIR export-brain -o ledger.json
-  python3 claudia_ledger.py --ledger DIR build-brain -o brain.canvas.tsx
+  export CLAUDIA_HOME=/workspace/claudia-<bot-id>   # or /cursor/stores/<store>/claudia
+  export CLAUDIA_BOT_ID=<bot-id>
+  python3 $CLAUDIA_HOME/tools/ledger/claudia_ledger.py --home "$CLAUDIA_HOME" init
+  python3 $CLAUDIA_HOME/tools/ledger/claudia_ledger.py --home "$CLAUDIA_HOME" check
 """
 
 from __future__ import annotations
@@ -20,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import shutil
 import sys
@@ -138,6 +136,7 @@ DEFAULT_BRAIN_URL = (
 )
 LEDGER_START = "/* LEDGER-DATA-START */"
 LEDGER_END = "/* LEDGER-DATA-END */"
+# Default retention; override with CLAUDIA_BACKUP_KEEP or --backup-keep.
 BACKUP_KEEP = 30
 
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -201,9 +200,102 @@ class LedgerError(Exception):
     """User-facing ledger problem."""
 
 
+def backup_keep_count(override: int | None = None) -> int:
+    """How many timestamped snapshots to retain under backups/."""
+    if override is not None:
+        if override < 1:
+            raise LedgerError("--backup-keep must be >= 1")
+        return override
+    raw = os.environ.get("CLAUDIA_BACKUP_KEEP", "").strip()
+    if raw:
+        if not raw.isdigit() or int(raw) < 1:
+            raise LedgerError("CLAUDIA_BACKUP_KEEP must be an integer >= 1")
+        return int(raw)
+    return BACKUP_KEEP
+
+
 def die(msg: str, code: int = 1) -> None:
     print(f"error: {msg}", file=sys.stderr)
     raise SystemExit(code)
+
+
+HOME_HELP = (
+    "Set CLAUDIA_HOME to this bot's own folder, or pass --home. "
+    "Example: export CLAUDIA_HOME=/workspace/claudia-<bot-id> "
+    "(or /cursor/stores/<its-store>/claudia if the bot has a persistent store). "
+    "There is no shared default, so two Claudia copies on one machine do not mix ledgers. "
+    "Save that path in memory and reuse it every routine."
+)
+
+BOT_ID_HELP = (
+    "Set CLAUDIA_BOT_ID to this bot's id, or pass --bot-id. "
+    "first_run records it in owner.json so another Claudia copy cannot write this ledger by mistake."
+)
+
+
+def resolve_home(cli_home: str | None) -> Path:
+    """Require --home or CLAUDIA_HOME. Flag wins. No shared default."""
+    raw = (cli_home or "").strip() or os.environ.get("CLAUDIA_HOME", "").strip()
+    if not raw:
+        die(HOME_HELP)
+    return Path(raw).expanduser().resolve()
+
+
+def resolve_bot_id(cli_bot_id: str | None, *, required: bool) -> str:
+    raw = (cli_bot_id or "").strip() or os.environ.get("CLAUDIA_BOT_ID", "").strip()
+    if not raw:
+        if required:
+            die(BOT_ID_HELP)
+        return ""
+    return raw
+
+
+def home_ledger_dir(home: Path) -> Path:
+    return home / "ledger"
+
+
+def home_tools_dir(home: Path) -> Path:
+    return home / "tools"
+
+
+def load_owner_json(ledger: Path) -> dict[str, Any]:
+    path = ledger / "owner.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_owner_json(ledger: Path, data: Mapping[str, Any]) -> None:
+    path = ledger / "owner.json"
+    path.write_text(json.dumps(dict(data), indent=2) + "\n", encoding="utf-8")
+
+
+def bot_id_mismatch_message(stored: str, passed: str, ledger: Path) -> str:
+    return (
+        f"bot_id mismatch: owner.json has bot_id={stored!r} but this run passed "
+        f"bot_id={passed!r} (ledger {ledger}). "
+        "Stop. This ledger belongs to another Claudia copy. "
+        "Use that bot's CLAUDIA_HOME, or pick a different home for this bot."
+    )
+
+
+def verify_bot_id(ledger: Path, bot_id: str, *, hard: bool) -> str | None:
+    """Return a problem string if mismatched. hard=True dies immediately."""
+    if not bot_id:
+        return None
+    stored = str(load_owner_json(ledger).get("bot_id") or "").strip()
+    if not stored:
+        return None
+    if stored == bot_id:
+        return None
+    msg = bot_id_mismatch_message(stored, bot_id, ledger)
+    if hard:
+        die(msg)
+    return msg
 
 
 def ensure_ledger_dir(path: Path) -> Path:
@@ -253,9 +345,13 @@ def write_rows(ledger: Path, filename: str, rows: Sequence[Mapping[str, str]]) -
             writer.writerow({k: row.get(k, "") for k in expected})
 
 
-def backup_ledger(ledger: Path) -> Path:
+def backup_ledger(ledger: Path, *, keep: int | None = None) -> Path:
+    """Snapshot CSVs (+ notes/, owner.json) before a write. Keeps the last N."""
     src_files = [ledger / name for name in HEADERS]
+    owner = ledger / "owner.json"
     existing = [p for p in src_files if p.exists()]
+    if owner.exists():
+        existing.append(owner)
     if not existing:
         return ledger
     stamp = ts_stamp()
@@ -274,10 +370,73 @@ def backup_ledger(ledger: Path) -> Path:
     # prune old backups
     root = backups_dir(ledger)
     stamps = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
-    while len(stamps) > BACKUP_KEEP:
+    retain = backup_keep_count(keep)
+    while len(stamps) > retain:
         old = stamps.pop(0)
         shutil.rmtree(old, ignore_errors=True)
     return dest
+
+
+def list_backup_stamps(ledger: Path) -> list[Path]:
+    root = backups_dir(ledger)
+    if not root.is_dir():
+        return []
+    return sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
+
+
+def cmd_backups(args: argparse.Namespace) -> int:
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    stamps = list_backup_stamps(ledger)
+    if not stamps:
+        print("no backups yet")
+        return 0
+    print(f"backups in {backups_dir(ledger)} (newest last):")
+    for p in stamps:
+        files = sorted(x.name for x in p.iterdir())
+        print(f"  {p.name}  ({len(files)} entries)")
+    print(f"count: {len(stamps)} (keep {backup_keep_count()})")
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    """Restore a snapshot. Snapshots the current ledger first."""
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    stamp = args.snapshot.strip()
+    if not stamp:
+        die("pass a snapshot name (see: backups)")
+    src = backups_dir(ledger) / stamp
+    if not src.is_dir():
+        die(f"snapshot not found: {stamp}. Run: backups")
+    # Safety: snapshot current state before overwriting.
+    pre = backup_ledger(ledger)
+    print(f"safety snapshot of current state: {pre.name}")
+    # Restore CSVs listed in the snapshot; leave unrelated files alone.
+    restored = 0
+    for name in HEADERS:
+        candidate = src / name
+        if candidate.is_file():
+            shutil.copy2(candidate, ledger / name)
+            restored += 1
+    owner_src = src / "owner.json"
+    if owner_src.is_file():
+        shutil.copy2(owner_src, ledger / "owner.json")
+        restored += 1
+    notes_src = src / "notes"
+    if notes_src.is_dir():
+        dest_notes = notes_dir(ledger)
+        if dest_notes.exists():
+            shutil.rmtree(dest_notes)
+        shutil.copytree(notes_src, dest_notes)
+        restored += 1
+    append_log(
+        ledger,
+        "restore",
+        stamp,
+        f"restored from backups/{stamp}; pre-restore snapshot {pre.name}",
+        approved="yes",
+    )
+    print(f"restored {stamp} ({restored} paths). Re-run check next.")
+    return 0
 
 
 def next_id(rows: Sequence[Mapping[str, str]], col: str, prefix: str, width: int) -> str:
@@ -327,7 +486,7 @@ def templates_dir() -> Path | None:
     return None
 
 
-def write_empty_csvs(dest: Path) -> None:
+def write_empty_csvs(dest: Path, *, bot_id: str = "", owner_name: str = "You") -> None:
     dest.mkdir(parents=True, exist_ok=True)
     notes_dir(dest).mkdir(parents=True, exist_ok=True)
     backups_dir(dest).mkdir(parents=True, exist_ok=True)
@@ -342,24 +501,43 @@ def write_empty_csvs(dest: Path) -> None:
             with path.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=headers, lineterminator="\n")
                 writer.writeheader()
-    owner = dest / "owner.json"
-    if not owner.exists():
-        owner.write_text(
-            json.dumps({"name": "You"}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+    owner_path = dest / "owner.json"
+    if not owner_path.exists():
+        payload: dict[str, Any] = {"name": owner_name or "You"}
+        if bot_id:
+            payload["bot_id"] = bot_id
+        write_owner_json(dest, payload)
+    elif bot_id:
+        data = load_owner_json(dest)
+        stored = str(data.get("bot_id") or "").strip()
+        if not stored:
+            data["bot_id"] = bot_id
+            if "name" not in data or not data["name"]:
+                data["name"] = owner_name or "You"
+            write_owner_json(dest, data)
 
 
 def cmd_init(args: argparse.Namespace) -> int:
     dest = Path(args.ledger)
+    bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=True)
     if dest.exists() and any((dest / n).exists() for n in HEADERS):
+        mismatch = verify_bot_id(dest, bot_id, hard=False)
+        if mismatch:
+            die(mismatch)
         if not args.force:
             die(
                 f"ledger already has CSV files in {dest}. "
                 "Pass --force to fill only missing files."
             )
-    write_empty_csvs(dest)
+    write_empty_csvs(dest, bot_id=bot_id)
+    # Ensure bot_id is recorded even when owner.json already existed.
+    data = load_owner_json(dest)
+    data["bot_id"] = bot_id
+    if not data.get("name"):
+        data["name"] = "You"
+    write_owner_json(dest, data)
     print(f"initialized ledger at {dest}")
+    print(f"owner.json bot_id={bot_id}")
     print("files: " + ", ".join(HEADERS))
     print("notes/ and backups/ ready. owner.json default name is You.")
     return 0
@@ -1198,9 +1376,18 @@ def fetch_text(source: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def default_brain_template(home: Path | None) -> str:
+    if home is not None:
+        local = home_tools_dir(home) / "brain" / "claudia-brain.canvas.tsx"
+        if local.is_file():
+            return str(local)
+    return DEFAULT_BRAIN_URL
+
+
 def cmd_build_brain(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
-    template_src = args.template or DEFAULT_BRAIN_URL
+    home = getattr(args, "home_path", None)
+    template_src = args.template or default_brain_template(home)
     try:
         template = fetch_text(template_src)
         obj = export_brain_obj(
@@ -1230,6 +1417,20 @@ def cmd_check(args: argparse.Namespace) -> int:
     if not ledger.exists():
         print(f"error: ledger folder not found: {ledger}")
         return 2
+
+    bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=False)
+    stored = str(load_owner_json(ledger).get("bot_id") or "").strip()
+    if stored and not bot_id:
+        problems.append(
+            "owner.json has bot_id="
+            + repr(stored)
+            + " but this run did not pass CLAUDIA_BOT_ID or --bot-id. "
+            "Pass this bot's id so we can confirm the ledger belongs to it."
+        )
+    elif bot_id:
+        mismatch = verify_bot_id(ledger, bot_id, hard=False)
+        if mismatch:
+            problems.append(mismatch)
 
     for name in HEADERS:
         path = ledger / name
@@ -1395,11 +1596,11 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
 
     if problems:
-        print("CHECK FAILED — fix these before refreshing Claudia's Brain:")
+        print("CHECK FAILED - fix these before refreshing Claudia's Brain:")
         for p in problems:
             print(f"  - {p}")
     else:
-        print("CHECK OK — ledger files, headers, IDs and references look sound.")
+        print("CHECK OK - ledger files, headers, IDs and references look sound.")
 
     if warnings:
         print("Notes (not blocking):")
@@ -1418,25 +1619,49 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claudia_ledger.py",
         description=(
-            "Claudia Ledger: init, edit, check, and export the CSV ledger "
-            "for Claudia's Brain. Made with Grok Bot."
+            "Claudia Ledger: init, edit, check, backup/restore, and export "
+            "the CSV ledger for Claudia's Brain. Made with Grok Bot."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
-  python3 claudia_ledger.py --ledger /workspace/claudia-ledger init
-  python3 claudia_ledger.py --ledger DIR add person --name "Alex Rivera" --org-id O-0001
-  python3 claudia_ledger.py --ledger DIR add commitment --direction "I owe" --person-id P-0001 \\
+  export CLAUDIA_HOME=/workspace/claudia-<bot-id>
+  export CLAUDIA_BOT_ID=<bot-id>
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" init
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" add person --name "Alex Rivera" --org-id O-0001
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" add commitment --direction "I owe" --person-id P-0001 \\
       --what "Send deck" --due 2026-10-25 --source-link chat:2026-10-24
-  python3 claudia_ledger.py --ledger DIR close --id C-0001 --status done
-  python3 claudia_ledger.py --ledger DIR check
-  python3 claudia_ledger.py --ledger DIR build-brain -o /tmp/brain.canvas.tsx
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" close --id C-0001 --status done
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" backups
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" restore 20261024T120000Z
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" check
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" build-brain -o /tmp/claudia-brain-ready.canvas.tsx
 """.strip(),
     )
     p.add_argument(
+        "--home",
+        default=None,
+        help="This bot's Claudia home (or set CLAUDIA_HOME). Ledger is $HOME/ledger.",
+    )
+    p.add_argument(
+        "--bot-id",
+        default=None,
+        dest="bot_id",
+        help="This bot's id (or set CLAUDIA_BOT_ID). Required for init; checked on writes.",
+    )
+    p.add_argument(
         "--ledger",
-        required=True,
-        help="Folder that holds the CSV ledger (e.g. /workspace/claudia-ledger)",
+        default=None,
+        help="Optional override of the ledger folder (default: $CLAUDIA_HOME/ledger)",
+    )
+    p.add_argument(
+        "--backup-keep",
+        type=int,
+        default=None,
+        help=(
+            f"How many backups to keep (default {BACKUP_KEEP}, "
+            "or CLAUDIA_BACKUP_KEEP)"
+        ),
     )
 
     sub = p.add_subparsers(dest="command", required=True)
@@ -1629,7 +1854,8 @@ examples:
         "--template",
         help=(
             "Local path or URL of claudia-brain.canvas.tsx "
-            f"(default: {DEFAULT_BRAIN_URL})"
+            "(default: $CLAUDIA_HOME/tools/brain/claudia-brain.canvas.tsx, "
+            f"else {DEFAULT_BRAIN_URL})"
         ),
     )
     p_build.add_argument("--owner", help="Owner display name")
@@ -1637,12 +1863,45 @@ examples:
     p_build.add_argument("--generated", help="Override generated date (YYYY-MM-DD)")
     p_build.set_defaults(func=cmd_build_brain)
 
+    p_backups = sub.add_parser(
+        "backups",
+        help="List timestamped snapshots under backups/",
+    )
+    p_backups.set_defaults(func=cmd_backups)
+
+    p_restore = sub.add_parser(
+        "restore",
+        help="Restore a snapshot (takes a safety snapshot of current state first)",
+    )
+    p_restore.add_argument(
+        "snapshot",
+        help="Snapshot folder name under backups/ (see: backups)",
+    )
+    p_restore.set_defaults(func=cmd_restore)
+
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Honor --backup-keep for this process via the env var read by backup_keep_count.
+    if getattr(args, "backup_keep", None) is not None:
+        os.environ["CLAUDIA_BACKUP_KEEP"] = str(args.backup_keep)
+
+    home = resolve_home(getattr(args, "home", None))
+    args.home_path = home
+    if args.ledger:
+        args.ledger = str(Path(args.ledger).expanduser().resolve())
+    else:
+        args.ledger = str(home_ledger_dir(home))
+
+    bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=False)
+    args.bot_id = bot_id or None
+    # Refuse writes into another bot's ledger when a bot_id is available.
+    if args.command != "init" and bot_id and Path(args.ledger).exists():
+        verify_bot_id(Path(args.ledger), bot_id, hard=True)
+
     try:
         return int(args.func(args))
     except LedgerError as e:

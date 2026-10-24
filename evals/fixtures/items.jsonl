@@ -1,0 +1,27 @@
+# Made with Grok Bot.
+# Fictional eval items only. Names and companies are made up.
+{"id":"e01","source":"email","date":"2026-10-20","from":"Sam Chen","to":"Alex Rivera","subject":"Launch kit","text":"I'll send the updated launch kit by Friday. Thanks for the notes.","link":"mail:e01"}
+{"id":"e02","source":"email","date":"2026-10-21","from":"Alex Rivera","to":"Sam Chen","subject":"Deck","text":"Can you send me the partner deck by tomorrow EOD?","link":"mail:e02"}
+{"id":"e03","source":"email","date":"2026-10-18","from":"Sam Chen","to":"Jordan Lee","subject":"Pricing","text":"I will email the pricing sheet on Wednesday.","link":"mail:e03"}
+{"id":"e04","source":"slack","date":"2026-10-22","from":"Priya Nair","to":"Sam Chen","subject":"","text":"Please share the Q4 forecast by next week.","link":"slack:e04"}
+{"id":"e05","source":"email","date":"2026-10-19","from":"Sam Chen","to":"Morgan Blake","subject":"Intro notes","text":"I'll have the intro notes ready tomorrow.","link":"mail:e05"}
+{"id":"e06","source":"call","date":"2026-10-17","from":"Casey Ng","to":"Sam Chen","subject":"Weekly sync","text":"I promise to deliver the contract redlines by 2026-10-24.","link":"call:e06"}
+{"id":"e07","source":"email","date":"2026-10-15","from":"Sam Chen","to":"Alex Rivera","subject":"Follow up","text":"I'll send the sample frames next week.","link":"mail:e07"}
+{"id":"e08","source":"slack","date":"2026-10-20","from":"Sam Chen","to":"Taylor Brooks","subject":"","text":"I will get you the onboarding checklist by Thursday.","link":"slack:e08"}
+{"id":"e09","source":"email","date":"2026-10-21","from":"Riley Quinn","to":"Sam Chen","subject":"Logo pack","text":"Could you send the logo pack by Friday?","link":"mail:e09"}
+{"id":"e10","source":"email","date":"2026-10-16","from":"Sam Chen","to":"Alex Rivera","subject":"Agenda","text":"I'll draft the agenda tonight.","link":"mail:e10"}
+{"id":"e11","source":"calendar","date":"2026-10-22","from":"Sam Chen","to":"Jordan Lee","subject":"Prep","text":"I will provide the briefing memo by EOD.","link":"cal:e11"}
+{"id":"e12","source":"email","date":"2026-10-14","from":"Morgan Blake","to":"Sam Chen","subject":"Invoice","text":"Please send the signed invoice by October 20.","link":"mail:e12"}
+{"id":"e13","source":"slack","date":"2026-10-23","from":"Sam Chen","to":"Priya Nair","subject":"","text":"I'll share the hiring scorecard on Monday.","link":"slack:e13"}
+{"id":"e14","source":"email","date":"2026-10-19","from":"Alex Rivera","to":"Sam Chen","subject":"Need review","text":"I need you to review the partnership brief by tomorrow.","link":"mail:e14"}
+{"id":"e15","source":"call","date":"2026-10-20","from":"Sam Chen","to":"Casey Ng","subject":"","text":"I'll finish the timeline and send it Friday.","link":"call:e15"}
+{"id":"n01","source":"email","date":"2026-10-20","from":"Alex Rivera","to":"Sam Chen","subject":"Catch up","text":"Let's catch up sometime soon about the project.","link":"mail:n01"}
+{"id":"n02","source":"slack","date":"2026-10-21","from":"Sam Chen","to":"Alex Rivera","subject":"","text":"We should sync next week if we have time.","link":"slack:n02"}
+{"id":"n03","source":"email","date":"2026-10-18","from":"Sam Chen","to":"Jordan Lee","subject":"Done","text":"I already sent the pricing sheet yesterday.","link":"mail:n03"}
+{"id":"n04","source":"email","date":"2026-10-19","from":"Jordan Lee","to":"Priya Nair","subject":"Deck","text":"Jordan will send Priya the investor deck on Friday.","link":"mail:n04"}
+{"id":"n05","source":"email","date":"2026-10-20","from":"Alex Rivera","to":"Sam Chen","subject":"Status","text":"Did you send the launch kit already?","link":"mail:n05"}
+{"id":"n06","source":"slack","date":"2026-10-22","from":"Sam Chen","to":"Morgan Blake","subject":"","text":"Maybe I'll send a draft if I get a chance.","link":"slack:n06"}
+{"id":"n07","source":"email","date":"2026-10-21","from":"Priya Nair","to":"Sam Chen","subject":"Wish","text":"It would be great if someone shared the forecast eventually.","link":"mail:n07"}
+{"id":"n08","source":"call","date":"2026-10-17","from":"Casey Ng","to":"Sam Chen","subject":"","text":"If we had time I would rewrite the whole contract.","link":"call:n08"}
+{"id":"n09","source":"email","date":"2026-10-16","from":"Sam Chen","to":"Taylor Brooks","subject":"Trying","text":"I'll try to look at the checklist when I can.","link":"mail:n09"}
+{"id":"n10","source":"slack","date":"2026-10-23","from":"Riley Quinn","to":"Sam Chen","subject":"","text":"Just making sure you saw my last note about logos.","link":"slack:n10"}

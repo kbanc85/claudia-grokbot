@@ -1,0 +1,17 @@
+# Made with Grok Bot.
+# Placeholders: day_date, coverage_seeing, coverage_not_seeing, needs_attention,
+# watch, calendar_summary, calendar_items, brain_link, one_question
+**Morning brief, {day_date}**
+Seeing: {coverage_seeing}. Not seeing: {coverage_not_seeing}
+
+Needs attention
+{needs_attention}
+
+Watch
+{watch}
+
+Calendar: {calendar_summary}
+{calendar_items}
+
+Claudia's Brain: {brain_link}
+One question: {one_question}

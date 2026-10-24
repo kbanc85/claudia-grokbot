@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,14 +15,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "templates" / "claudia_render.py"
 LEDGER = ROOT / "ledger" / "claudia_ledger.py"
+BOT = "render-test-bot"
 
 
-def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPT), *args],
-        capture_output=True,
-        text=True,
-    )
+def run(
+    *args: str,
+    check: bool = True,
+    home: Path | None = None,
+    clear_home_env: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    cmd = [sys.executable, str(SCRIPT)]
+    if home is not None:
+        cmd.extend(["--home", str(home)])
+    cmd.extend(args)
+    env = os.environ.copy()
+    if clear_home_env:
+        env.pop("CLAUDIA_HOME", None)
+        env.pop("CLAUDIA_BOT_ID", None)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if check and proc.returncode != 0:
         raise AssertionError(
             f"failed: {args}\nstdout={proc.stdout}\nstderr={proc.stderr}"
@@ -32,26 +43,42 @@ def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 class RenderTests(unittest.TestCase):
     def test_welcome_fills_name(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            data = Path(td) / "vars.json"
+            home = Path(td) / "home"
+            home.mkdir()
+            data = home / "vars.json"
             data.write_text(json.dumps({"name": "Sam"}), encoding="utf-8")
-            proc = run("--template", "welcome_tour", "--data", str(data))
+            proc = run("--template", "welcome_tour", "--data", str(data), home=home)
             self.assertIn("Hi Sam", proc.stdout)
             self.assertIn("👋", proc.stdout)
             self.assertNotIn("{name}", proc.stdout)
 
     def test_missing_placeholder_fails_loudly(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            data = Path(td) / "vars.json"
+            home = Path(td) / "home"
+            home.mkdir()
+            data = home / "vars.json"
             data.write_text(json.dumps({}), encoding="utf-8")
             proc = run(
                 "--template",
                 "morning_brief",
                 "--data",
                 str(data),
+                home=home,
                 check=False,
             )
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("missing placeholders", proc.stderr)
+
+    def test_missing_home_fails(self) -> None:
+        proc = run(
+            "--template",
+            "welcome_tour",
+            "--list-placeholders",
+            check=False,
+            clear_home_env=True,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("CLAUDIA_HOME", proc.stderr)
 
     def test_no_em_dash_in_templates(self) -> None:
         for path in (ROOT / "templates").glob("*.txt"):
@@ -61,9 +88,17 @@ class RenderTests(unittest.TestCase):
 
     def test_ledger_promise_catch(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            ledger = Path(td) / "ledger"
+            home = Path(td) / "home"
             subprocess.run(
-                [sys.executable, str(LEDGER), "--ledger", str(ledger), "init"],
+                [
+                    sys.executable,
+                    str(LEDGER),
+                    "--home",
+                    str(home),
+                    "--bot-id",
+                    BOT,
+                    "init",
+                ],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -72,8 +107,10 @@ class RenderTests(unittest.TestCase):
                 [
                     sys.executable,
                     str(LEDGER),
-                    "--ledger",
-                    str(ledger),
+                    "--home",
+                    str(home),
+                    "--bot-id",
+                    BOT,
                     "add",
                     "person",
                     "--name",
@@ -87,8 +124,10 @@ class RenderTests(unittest.TestCase):
                 [
                     sys.executable,
                     str(LEDGER),
-                    "--ledger",
-                    str(ledger),
+                    "--home",
+                    str(home),
+                    "--bot-id",
+                    BOT,
                     "add",
                     "commitment",
                     "--direction",
@@ -106,7 +145,7 @@ class RenderTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            proc = run("--template", "promise_catch", "--ledger", str(ledger))
+            proc = run("--template", "promise_catch", home=home)
             self.assertIn("1 promises", proc.stdout)
             self.assertIn("Send deck", proc.stdout)
 

@@ -22,8 +22,19 @@ UPLOADED_TEMPLATE = Path(
 )
 
 
-def run_ledger(ledger: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    cmd = [sys.executable, str(SCRIPT), "--ledger", str(ledger), *args]
+BOT = "example-test-bot"
+
+
+def run_ledger(home: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    cmd = [
+        sys.executable,
+        str(SCRIPT),
+        "--home",
+        str(home),
+        "--bot-id",
+        BOT,
+        *args,
+    ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if check and proc.returncode != 0:
         raise AssertionError(
@@ -36,11 +47,12 @@ def run_ledger(ledger: Path, *args: str, check: bool = True) -> subprocess.Compl
 class ClaudiaLedgerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="claudia-test-"))
-        self.ledger = self.tmp / "ledger"
+        self.home = self.tmp / "home"
+        self.ledger = self.home / "ledger"
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def test_init_creates_headers(self) -> None:
-        run_ledger(self.ledger, "init")
+        run_ledger(self.home, "init")
         for name in (
             "people.csv",
             "organizations.csv",
@@ -61,10 +73,10 @@ class ClaudiaLedgerTests(unittest.TestCase):
         self.assertTrue((self.ledger / "owner.json").exists())
 
     def test_add_export_build_check(self) -> None:
-        run_ledger(self.ledger, "init")
-        run_ledger(self.ledger, "add", "org", "--name", "Northwind Labs")
+        run_ledger(self.home, "init")
+        run_ledger(self.home, "add", "org", "--name", "Northwind Labs")
         run_ledger(
-            self.ledger,
+            self.home,
             "add",
             "project",
             "--name",
@@ -73,7 +85,7 @@ class ClaudiaLedgerTests(unittest.TestCase):
             "O-0001",
         )
         run_ledger(
-            self.ledger,
+            self.home,
             "add",
             "person",
             "--name",
@@ -98,7 +110,7 @@ class ClaudiaLedgerTests(unittest.TestCase):
             "alex@northwind.example",
         )
         run_ledger(
-            self.ledger,
+            self.home,
             "add",
             "commitment",
             "--direction",
@@ -113,7 +125,7 @@ class ClaudiaLedgerTests(unittest.TestCase):
             "example",
         )
         run_ledger(
-            self.ledger,
+            self.home,
             "add",
             "interaction",
             "--person-id",
@@ -130,7 +142,7 @@ class ClaudiaLedgerTests(unittest.TestCase):
             "example",
         )
         run_ledger(
-            self.ledger,
+            self.home,
             "add",
             "link",
             "--from-id",
@@ -146,7 +158,7 @@ class ClaudiaLedgerTests(unittest.TestCase):
         )
 
         exp = run_ledger(
-            self.ledger,
+            self.home,
             "export-brain",
             "--example",
             "--generated",
@@ -175,7 +187,7 @@ class ClaudiaLedgerTests(unittest.TestCase):
         self.assertTrue(template.exists(), "brain template missing")
         out = self.tmp / "brain.canvas.tsx"
         run_ledger(
-            self.ledger,
+            self.home,
             "build-brain",
             "-o",
             str(out),
@@ -194,16 +206,16 @@ class ClaudiaLedgerTests(unittest.TestCase):
         before = template.read_text(encoding="utf-8").split("/* LEDGER-DATA-START */", 1)[0]
         self.assertTrue(text.startswith(before))
 
-        chk = run_ledger(self.ledger, "check")
+        chk = run_ledger(self.home, "check")
         self.assertEqual(chk.returncode, 0)
         self.assertIn("CHECK OK", chk.stdout)
 
     def test_check_catches_bad_header_and_broken_ref(self) -> None:
-        run_ledger(self.ledger, "init")
+        run_ledger(self.home, "init")
         # break people header
         bad = self.ledger / "people.csv"
         bad.write_text("person_id,name\nP-0001,Alex\n", encoding="utf-8")
-        proc = run_ledger(self.ledger, "check", check=False)
+        proc = run_ledger(self.home, "check", check=False)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("headers are wrong", proc.stdout)
 
@@ -214,17 +226,17 @@ class ClaudiaLedgerTests(unittest.TestCase):
             "C-0001,I owe,P-9999,Missing person,2026-10-25,open,example,2026-10-24,\n",
             encoding="utf-8",
         )
-        proc = run_ledger(self.ledger, "check", check=False)
+        proc = run_ledger(self.home, "check", check=False)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("missing person", proc.stdout)
 
     def test_build_brain_fails_without_markers(self) -> None:
-        run_ledger(self.ledger, "init")
+        run_ledger(self.home, "init")
         broken = self.tmp / "broken.canvas.tsx"
         broken.write_text("// no markers here\n", encoding="utf-8")
         out = self.tmp / "out.canvas.tsx"
         proc = run_ledger(
-            self.ledger,
+            self.home,
             "build-brain",
             "-o",
             str(out),
@@ -237,16 +249,22 @@ class ClaudiaLedgerTests(unittest.TestCase):
 
     def test_example_ledger_check_and_export(self) -> None:
         # Copy the shipped example so we do not mutate the repo copy.
+        self.home.mkdir(parents=True, exist_ok=True)
         shutil.copytree(EXAMPLE, self.ledger, dirs_exist_ok=True)
         # drop the test module itself if copied
         for junk in self.ledger.glob("test_*.py"):
             junk.unlink()
         for junk in self.ledger.glob("README.md"):
             junk.unlink()
-        proc = run_ledger(self.ledger, "check")
+        # Align example owner.json with this test bot id.
+        owner = self.ledger / "owner.json"
+        data = json.loads(owner.read_text(encoding="utf-8"))
+        data["bot_id"] = BOT
+        owner.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        proc = run_ledger(self.home, "check")
         self.assertEqual(proc.returncode, 0)
         exp = run_ledger(
-            self.ledger,
+            self.home,
             "export-brain",
             "--example",
             "--generated",

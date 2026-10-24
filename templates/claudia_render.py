@@ -5,8 +5,9 @@
 Missing placeholders fail loudly (exit 1). Extra data keys are ignored.
 
 Examples:
-  python3 claudia_render.py --template morning_brief --data vars.json
-  python3 claudia_render.py --template promise_catch --ledger /workspace/claudia-ledger
+  export CLAUDIA_HOME=/workspace/claudia-<bot-id>
+  python3 claudia_render.py --home "$CLAUDIA_HOME" --template morning_brief --data vars.json
+  python3 claudia_render.py --home "$CLAUDIA_HOME" --template promise_catch
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from datetime import date, datetime, timezone
@@ -241,6 +243,21 @@ def parse_safe(s: str) -> date | None:
         return None
 
 
+HOME_HELP = (
+    "Set CLAUDIA_HOME to this bot's own folder, or pass --home. "
+    "Example: export CLAUDIA_HOME=/workspace/claudia-<bot-id> "
+    "(or /cursor/stores/<its-store>/claudia). "
+    "There is no shared default."
+)
+
+
+def resolve_home(cli_home: str | None) -> Path:
+    raw = (cli_home or "").strip() or os.environ.get("CLAUDIA_HOME", "").strip()
+    if not raw:
+        raise RenderError(HOME_HELP)
+    return Path(raw).expanduser().resolve()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claudia_render.py",
@@ -248,6 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Fill Claudia message templates from JSON or the ledger. "
             "Missing placeholders fail loudly. Made with Grok Bot."
         ),
+    )
+    p.add_argument(
+        "--home",
+        default=None,
+        help="This bot's Claudia home (or set CLAUDIA_HOME). Ledger is $HOME/ledger.",
     )
     p.add_argument(
         "--template",
@@ -261,7 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--ledger",
-        help="Ledger folder; used when --data is omitted to fill from CSVs",
+        help="Optional ledger override (default: $CLAUDIA_HOME/ledger)",
     )
     p.add_argument(
         "-o",
@@ -279,16 +301,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        # Home is always required so templates stay per-bot even with --data.
+        home = resolve_home(args.home)
         text = load_template(args.template)
         if args.list_placeholders:
             print("\n".join(required_placeholders(text)))
             return 0
         if args.data:
             data = load_json_data(Path(args.data))
-        elif args.ledger:
-            data = data_from_ledger(Path(args.ledger), args.template)
         else:
-            raise RenderError("pass --data JSON or --ledger DIR")
+            ledger = (
+                Path(args.ledger).expanduser().resolve()
+                if args.ledger
+                else home / "ledger"
+            )
+            data = data_from_ledger(ledger, args.template)
         out = render(text, data)
     except RenderError as e:
         print(f"error: {e}", file=sys.stderr)

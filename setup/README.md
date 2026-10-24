@@ -1,28 +1,21 @@
 # First run
 
-Idempotent setup for every installed Claudia copy.
+Idempotent setup for **one** Claudia copy under its own home.
 
 Made with Grok Bot.
 
 ```bash
-bash setup/first_run.sh
+export CLAUDIA_HOME=/workspace/claudia-<bot-id>   # or /cursor/stores/<store>/claudia
+export CLAUDIA_BOT_ID=<bot-id>
+bash setup/first_run.sh --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID"
 ```
 
-Environment overrides:
+`--home` / `--bot-id` win over the env vars. The script **refuses to run** if either is missing. There is no shared `/workspace/claudia-ledger` default.
 
-| Variable | Default |
-|----------|---------|
-| `CLAUDIA_TOOLS_DIR` | `/workspace/claudia-tools` |
-| `CLAUDIA_LEDGER_DIR` | `/workspace/claudia-ledger` |
-| `CLAUDIA_REPO_RAW` | `https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main` |
+Creates:
 
-What it does:
+- `$CLAUDIA_HOME/tools/` (downloaded tools)
+- `$CLAUDIA_HOME/ledger/` (CSVs + `owner.json` with `bot_id`)
+- `$CLAUDIA_HOME/claudia-brain-ready.canvas.tsx` (empty Brain)
 
-1. Creates the tools and ledger folders.
-2. Installs tools from the local checkout when present, otherwise curls the hosted repo.
-3. Runs `ledger init` (or `init --force` when CSVs already exist, so existing data is kept).
-4. Runs `check`.
-5. Builds an empty Brain canvas to `/tmp/claudia-brain-ready.canvas.tsx`.
-6. Prints a plain-English OK / PROBLEM summary.
-
-Re-running never wipes people, promises, or notes.
+Re-running never wipes people, promises, or notes. A `bot_id` mismatch on re-run is reported as a PROBLEM and exits non-zero.

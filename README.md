@@ -54,7 +54,7 @@ Install the public template:
 
 **[Claudia, Chief of Staff on x.ai](https://x.ai/bot/AkJewmJ9D2DlMpBD5XaCG)**
 
-Each installed copy runs on its own Linux box with Python 3 and curl, reads your sources through the packed plugins (Gmail, Google Calendar, Slack, Otter, Google Drive, Google Sheets), and downloads the shared tools from this repo so every copy behaves the same.
+Each installed copy runs on its own Linux box with Python 3 and curl, reads your sources through the packed plugins (Gmail, Google Calendar, Slack, Otter, Google Drive, Google Sheets), and downloads the shared tools from this repo so every copy behaves the same. Each copy uses its own `$CLAUDIA_HOME` (and `$CLAUDIA_BOT_ID`) so two Claudias on one machine never share a ledger.
 
 ## What this repo is for
 
@@ -84,8 +84,11 @@ Claudia is based on [claudia.aiadopters.club](https://claudia.aiadopters.club) a
 python3 -m unittest discover -s ledger/example -p 'test_*.py' -v
 python3 -m unittest discover -s templates -p 'test_*.py' -v
 python3 -m unittest discover -s scan -p 'test_*.py' -v
+python3 -m unittest discover -s update -p 'test_*.py' -v
+python3 -m unittest discover -s tests -p 'test_*.py' -v
 python3 evals/run_eval.py
-bash setup/first_run.sh
+export CLAUDIA_HOME=/tmp/claudia-demo CLAUDIA_BOT_ID=demo
+bash setup/first_run.sh --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID"
 ```
 
 ## Maintainers
@@ -94,6 +97,6 @@ bash setup/first_run.sh
 python3 update/claudia_update.py manifest --root .
 ```
 
-Regenerate `MANIFEST.sha256` last whenever shipped files change.
+Regenerate `MANIFEST.sha256` last whenever shipped files change. `VERSION` is a single line; notes go in `CHANGELOG.md`.
 
 Made with Grok Bot.

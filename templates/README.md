@@ -19,8 +19,9 @@ No em dashes appear in any template. Comments start with `#` and are stripped by
 ## Renderer
 
 ```bash
-python3 templates/claudia_render.py --template morning_brief --data /tmp/vars.json
-python3 templates/claudia_render.py --template promise_catch --ledger /workspace/claudia-ledger
+export CLAUDIA_HOME=/workspace/claudia-<bot-id>
+python3 templates/claudia_render.py --home "$CLAUDIA_HOME" --template morning_brief --data /tmp/vars.json
+python3 templates/claudia_render.py --home "$CLAUDIA_HOME" --template promise_catch
 ```
 
-Missing placeholders raise an error and exit non-zero (fail loudly). Extra keys in the data file are ignored.
+`--home` or `CLAUDIA_HOME` is required (ledger defaults to `$CLAUDIA_HOME/ledger`). Missing placeholders raise an error and exit non-zero (fail loudly). Extra keys in the data file are ignored.

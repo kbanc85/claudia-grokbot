@@ -11,9 +11,10 @@ Steps:
      untouched and exit non-zero.
 
 Also provides:
-  python3 claudia_update.py check     # report only
-  python3 claudia_update.py update    # download + verify + swap when newer
-  python3 claudia_update.py manifest  # regenerate MANIFEST.sha256 from repo root
+  export CLAUDIA_HOME=/workspace/claudia-<bot-id>
+  python3 claudia_update.py check --home "$CLAUDIA_HOME"
+  python3 claudia_update.py update --home "$CLAUDIA_HOME"
+  python3 claudia_update.py manifest --root .
 """
 
 from __future__ import annotations
@@ -32,9 +33,17 @@ DEFAULT_BASE = "https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main"
 DEFAULT_VERSION_URL = f"{DEFAULT_BASE}/VERSION"
 DEFAULT_MANIFEST_URL = f"{DEFAULT_BASE}/MANIFEST.sha256"
 
+HOME_HELP = (
+    "Set CLAUDIA_HOME to this bot's own folder, or pass --home. "
+    "Example: export CLAUDIA_HOME=/workspace/claudia-<bot-id> "
+    "(or /cursor/stores/<its-store>/claudia). "
+    "Tools install under $CLAUDIA_HOME/tools. There is no shared default."
+)
+
 # Paths included in the manifest when regenerating from a checkout.
 MANIFEST_GLOBS = [
     "VERSION",
+    "CHANGELOG.md",
     "MANIFEST.sha256",
     "docs/FOR-BOTS.md",
     "ledger/claudia_ledger.py",
@@ -57,8 +66,15 @@ class UpdateError(Exception):
 
 
 def parse_version(text: str) -> tuple[int, ...]:
-    """Parse the first line of VERSION as dotted integers (1.1.0 -> (1,1,0))."""
-    line = text.strip().splitlines()[0].strip() if text.strip() else ""
+    """Parse VERSION as dotted integers (single line preferred: 1.1.0)."""
+    # Skip blank / comment lines so an older multi-line VERSION still parses.
+    line = ""
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not s or s.startswith("#"):
+            continue
+        line = s
+        break
     if not line:
         raise UpdateError("empty VERSION")
     parts: list[int] = []
@@ -67,6 +83,22 @@ def parse_version(text: str) -> tuple[int, ...]:
             raise UpdateError(f"bad VERSION token {bit!r} in {line!r}")
         parts.append(int(bit))
     return tuple(parts)
+
+
+def resolve_home(cli_home: str | None) -> Path:
+    raw = (cli_home or "").strip() or os.environ.get("CLAUDIA_HOME", "").strip()
+    if not raw:
+        raise UpdateError(HOME_HELP)
+    return Path(raw).expanduser().resolve()
+
+
+def resolve_tools_dir(args: argparse.Namespace) -> Path:
+    """tools dir from --home/$CLAUDIA_HOME/tools, or explicit --tools-dir with home."""
+    home = resolve_home(getattr(args, "home", None))
+    override = getattr(args, "tools_dir", None)
+    if override:
+        return Path(override).expanduser().resolve()
+    return home / "tools"
 
 
 def version_gt(remote: tuple[int, ...], local: tuple[int, ...]) -> bool:
@@ -175,7 +207,7 @@ def read_local_version(tools_dir: Path) -> tuple[int, ...] | None:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    tools = Path(args.tools_dir)
+    tools = resolve_tools_dir(args)
     local = read_local_version(tools)
     remote_text = fetch_text(args.version_url)
     remote = parse_version(remote_text)
@@ -208,7 +240,7 @@ def atomic_replace(src: Path, dest: Path) -> None:
 
 
 def cmd_update(args: argparse.Namespace) -> int:
-    tools = Path(args.tools_dir)
+    tools = resolve_tools_dir(args)
     tools.mkdir(parents=True, exist_ok=True)
     local = read_local_version(tools)
     remote_text = fetch_text(args.version_url)
@@ -275,15 +307,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_check = sub.add_parser("check", help="Compare local VERSION to remote")
     p_check.add_argument(
+        "--home",
+        default=None,
+        help="This bot's Claudia home (or set CLAUDIA_HOME). Tools are $HOME/tools.",
+    )
+    p_check.add_argument(
         "--tools-dir",
-        default="/workspace/claudia-tools",
-        help="Local tools folder that holds VERSION",
+        default=None,
+        help="Optional override of the tools folder (default: $CLAUDIA_HOME/tools)",
     )
     p_check.add_argument("--version-url", default=DEFAULT_VERSION_URL)
     p_check.set_defaults(func=cmd_check)
 
     p_upd = sub.add_parser("update", help="Download, verify, and swap when newer")
-    p_upd.add_argument("--tools-dir", default="/workspace/claudia-tools")
+    p_upd.add_argument("--home", default=None, help="This bot's Claudia home (or CLAUDIA_HOME)")
+    p_upd.add_argument(
+        "--tools-dir",
+        default=None,
+        help="Optional override of the tools folder (default: $CLAUDIA_HOME/tools)",
+    )
     p_upd.add_argument("--version-url", default=DEFAULT_VERSION_URL)
     p_upd.add_argument("--manifest-url", default=DEFAULT_MANIFEST_URL)
     p_upd.add_argument("--base-url", default=DEFAULT_BASE)

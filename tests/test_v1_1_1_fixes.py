@@ -471,11 +471,11 @@ class WelcomeTourContentTests(unittest.TestCase):
 
 
 class VersionBumpTests(unittest.TestCase):
-    def test_version_is_exactly_1_1_1(self) -> None:
+    def test_version_is_exactly_1_1_2(self) -> None:
         raw = (ROOT / "VERSION").read_text(encoding="utf-8")
-        self.assertEqual(raw.strip(), "1.1.1")
+        self.assertEqual(raw.strip(), "1.1.2")
         # Exactly one content line (optional trailing newline only).
-        self.assertEqual([ln for ln in raw.splitlines() if ln.strip()], ["1.1.1"])
+        self.assertEqual([ln for ln in raw.splitlines() if ln.strip()], ["1.1.2"])
 
 
 if __name__ == "__main__":

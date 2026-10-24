@@ -49,7 +49,7 @@ Layout under `$CLAUDIA_HOME`:
 
 ## Version
 
-Current: **1.1.1** (see `CHANGELOG.md`).
+Current: **1.1.2** (see `CHANGELOG.md`).
 
 Before any routine that depends on these tools:
 

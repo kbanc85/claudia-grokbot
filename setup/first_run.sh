@@ -199,6 +199,15 @@ fi
 export CLAUDIA_HOME="${HOME_DIR}"
 export CLAUDIA_BOT_ID="${BOT_ID}"
 
+# Probe that the home mount accepts ordinary writes before declaring success.
+PROBE_FILE="${HOME_DIR}/.claudia_first_run_probe"
+if printf 'ok\n' > "${PROBE_FILE}" 2>/dev/null; then
+  rm -f "${PROBE_FILE}" || true
+  say_ok "home is writable (${HOME_DIR})"
+else
+  say_problem "cannot write probe file in ${HOME_DIR}. If this folder is half-built it is safe to delete, then pick another home (store first; else /workspace/claudia-${BOT_ID})."
+fi
+
 # Ledger init: never wipe existing CSVs. Use --force so missing files are filled.
 if [[ -f "${LEDGER_PY}" ]]; then
   existing=0
@@ -212,13 +221,13 @@ if [[ -f "${LEDGER_PY}" ]]; then
     if python3 "${LEDGER_PY}" --home "${HOME_DIR}" --bot-id "${BOT_ID}" init --force; then
       say_ok "ledger already present; filled only missing starter files (data kept)"
     else
-      say_problem "ledger init --force failed (bot_id mismatch or other error)"
+      say_problem "ledger init failed in ${HOME_DIR}. If the folder is half-built (tools but no owner.json) it is safe to delete, then re-run. Never keep two homes."
     fi
   else
     if python3 "${LEDGER_PY}" --home "${HOME_DIR}" --bot-id "${BOT_ID}" init; then
       say_ok "ledger initialized with bot_id=${BOT_ID}"
     else
-      say_problem "ledger init failed"
+      say_problem "ledger init failed in ${HOME_DIR}. If the folder is half-built (tools but no owner.json) it is safe to delete, then re-run. Never keep two homes."
     fi
   fi
 

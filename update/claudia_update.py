@@ -225,6 +225,16 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def safe_copy(src: Path, dst: Path) -> None:
+    """Copy file bytes only; ignore metadata PermissionError/OSError on mounts."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    try:
+        shutil.copystat(src, dst)
+    except (PermissionError, OSError):
+        pass
+
+
 def atomic_replace(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     # Write via tempfile in the destination directory, then os.replace.
@@ -232,7 +242,7 @@ def atomic_replace(src: Path, dest: Path) -> None:
     os.close(fd)
     tmp = Path(tmp_name)
     try:
-        shutil.copy2(src, tmp)
+        safe_copy(src, tmp)
         os.replace(tmp, dest)
     finally:
         if tmp.exists():

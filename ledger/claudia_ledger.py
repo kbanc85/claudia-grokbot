@@ -24,7 +24,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
@@ -73,6 +73,7 @@ HEADERS: dict[str, list[str]] = {
         "person_id",
         "what",
         "due",
+        "due_hint",
         "status",
         "source_link",
         "created",
@@ -133,7 +134,8 @@ ID_COUNTER_KEYS: dict[str, str] = {
 }
 
 # Commands that change ledger files (require --bot-id / CLAUDIA_BOT_ID).
-# export-brain / build-brain are read-only against the ledger CSVs.
+# export-brain / build-brain / propose-links / doctor / backups are read-only
+# against the ledger CSVs (propose-links writes only work/ scratch).
 WRITE_COMMANDS = frozenset(
     {
         "init",
@@ -144,16 +146,47 @@ WRITE_COMMANDS = frozenset(
         "forget",
         "restore",
         "health",
+        "apply-links",
+        "snapshot",
+        "cleanup-half-built",
     }
+)
+
+# Writes that change people, promises, or links (or restore) need --approved.
+APPROVAL_REQUIRED_COMMANDS = frozenset(
+    {
+        "add",
+        "update",
+        "close",
+        "merge",
+        "forget",
+        "restore",
+        "health",
+        "apply-links",
+    }
+)
+
+APPROVED_FLAG_VALUES = ("yes", "standing-rule", "no-approval-needed")
+APPROVED_LOG_VALUES = (
+    "yes",
+    "no-approval-needed",
+    "pending",
+    "standing-rule",
 )
 
 DIRECTIONS = ("I owe", "owed to me", "Claudia owes", "bot owes")
 COMMIT_STATUSES = ("open", "done", "dropped", "renegotiated")
 ACTORS = ("owner", "them", "claudia", "both")
-BASIS = ("stated", "extracted", "inferred")
+BASIS = ("stated", "extracted", "inferred", "owner-confirmed")
 CADENCE_SOURCES = ("default", "owner", "learned")
 HEALTH_VALUES = ("active", "cooling", "inactive")
 PROJECT_STATUSES = ("active", "paused", "done", "dropped")
+LINK_TYPES = (
+    "works_with",
+    "introduced_by",
+    "member_of",
+    "part_of_project",
+)
 
 DEFAULT_CADENCE = 30
 DEFAULT_BRAIN_URL = (
@@ -164,17 +197,75 @@ LEDGER_START = "/* LEDGER-DATA-START */"
 LEDGER_END = "/* LEDGER-DATA-END */"
 # Default retention; override with CLAUDIA_BACKUP_KEEP or --backup-keep.
 BACKUP_KEEP = 30
+# Named snapshot taken automatically before large writes / apply-links.
+PRE_BULK_LABEL = "pre-bulk"
+PRE_BULK_ROW_THRESHOLD = 10
 
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+# Snapshot folder: YYYYMMDDTHHMMSSZ, optional -N collision, optional -label.
+BACKUP_NAME_RE = re.compile(
+    r"^(?P<stamp>\d{8}T\d{6}Z)(?:-(?P<suffix>.+))?$"
+)
+BACKUP_NUMERIC_SUFFIX = re.compile(r"^\d+$")
+INTRO_WORDS = re.compile(
+    r"\b(?:intro(?:duce|ducing|duction)?|meet|meeting|connecting you|"
+    r"connect you|I'd like you to meet)\b",
+    re.IGNORECASE,
+)
+SUBJECT_WORD_RE = re.compile(r"[a-z0-9]{3,}")
+
+# Commitments headers before due_hint was added (1.1.2 and earlier).
+COMMITMENTS_HEADERS_LEGACY = [
+    "commit_id",
+    "direction",
+    "person_id",
+    "what",
+    "due",
+    "status",
+    "source_link",
+    "created",
+    "closed",
+]
 
 
 # ---------------------------------------------------------------------------
 # Time / paths
 # ---------------------------------------------------------------------------
 
+# Tests may inject a clock via CLAUDIA_CLOCK (YYYYMMDDTHHMMSSZ or ISO).
+_CLOCK_OVERRIDE: datetime | None = None
+
+
+def set_clock_override(value: datetime | None) -> None:
+    """Test helper: freeze utc_now / stamps. Pass None to clear."""
+    global _CLOCK_OVERRIDE
+    _CLOCK_OVERRIDE = value
+
+
+def _clock_from_env() -> datetime | None:
+    raw = os.environ.get("CLAUDIA_CLOCK", "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y%m%dT%H%M%SZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if fmt == "%Y-%m-%d":
+                dt = datetime(dt.year, dt.month, dt.day, 12, 0, 0)
+            return dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    raise LedgerError(
+        "CLAUDIA_CLOCK must be YYYYMMDDTHHMMSSZ, YYYY-MM-DDTHH:MM:SSZ, or YYYY-MM-DD"
+    )
+
 
 def utc_now() -> datetime:
+    if _CLOCK_OVERRIDE is not None:
+        return _CLOCK_OVERRIDE
+    env_clock = _clock_from_env()
+    if env_clock is not None:
+        return env_clock
     return datetime.now(timezone.utc)
 
 
@@ -245,6 +336,103 @@ def die(msg: str, code: int = 1) -> None:
     raise SystemExit(code)
 
 
+def safe_copy(src: Path | str, dst: Path | str) -> None:
+    """Copy file bytes only; ignore metadata PermissionError/OSError on mounts."""
+    src_p = Path(src)
+    dst_p = Path(dst)
+    dst_p.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src_p, dst_p)
+    try:
+        shutil.copystat(src_p, dst_p)
+    except (PermissionError, OSError):
+        pass
+
+
+def safe_copytree(src: Path | str, dst: Path | str) -> None:
+    """Copy a directory tree using byte-only file copies (no required metadata).
+
+    Implemented with walk + safe_copy so directory copystat is never required
+    (some persistent mounts reject utime/chmod on folders too).
+    """
+    src_p = Path(src)
+    dst_p = Path(dst)
+    if dst_p.exists():
+        raise FileExistsError(str(dst_p))
+    dst_p.mkdir(parents=True, exist_ok=False)
+    for root, _dirs, files in os.walk(src_p):
+        rel = Path(root).relative_to(src_p)
+        target_dir = dst_p / rel
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            safe_copy(Path(root) / name, target_dir / name)
+
+
+def resolve_approved(args: argparse.Namespace, *, default: str | None = None) -> str:
+    """Require --approved for approval-gated writes; validate the value."""
+    raw = getattr(args, "approved", None)
+    if raw is None or str(raw).strip() == "":
+        if default is not None:
+            raw = default
+        else:
+            die(
+                "pass --approved yes|standing-rule|no-approval-needed. "
+                "Use yes only when the owner said yes in chat to this exact change."
+            )
+    approved = str(raw).strip()
+    if approved not in APPROVED_FLAG_VALUES:
+        die(
+            f"approved must be one of {', '.join(APPROVED_FLAG_VALUES)} "
+            f"(got {approved!r})"
+        )
+    if approved == "standing-rule":
+        rule = str(getattr(args, "rule", None) or "").strip()
+        if not rule:
+            die(
+                "standing-rule requires --rule <name> so the log names the "
+                "saved owner rule"
+            )
+    return approved
+
+
+def owner_dateless_promises(ledger: Path) -> bool:
+    """Owner setting dateless_promises (default false). Kamil decides."""
+    data = load_owner_json(ledger)
+    val = data.get("dateless_promises", False)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(val)
+
+
+def with_rule_detail(args: argparse.Namespace, detail: str) -> str:
+    """When --approved standing-rule, embed rule=<name> in the log detail."""
+    if str(getattr(args, "approved", "") or "").strip() != "standing-rule":
+        return detail
+    rule = str(getattr(args, "rule", None) or "").strip()
+    if not rule:
+        return detail
+    if f"rule={rule}" in detail:
+        return detail
+    return f"{detail} rule={rule}"
+
+
+def tools_version() -> str:
+    """VERSION next to this script, or under $CLAUDIA_HOME/tools, or unknown."""
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent / "VERSION",
+        here.parent / "VERSION",
+    ]
+    home = os.environ.get("CLAUDIA_HOME", "").strip()
+    if home:
+        candidates.insert(0, Path(home) / "tools" / "VERSION")
+    for path in candidates:
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip() or "unknown"
+    return "unknown"
+
+
 HOME_HELP = (
     "Set CLAUDIA_HOME to this bot's own folder, or pass --home. "
     "Example: export CLAUDIA_HOME=/workspace/claudia-<bot-id> "
@@ -301,7 +489,16 @@ def load_owner_json(ledger: Path) -> dict[str, Any]:
 
 def write_owner_json(ledger: Path, data: Mapping[str, Any]) -> None:
     path = ledger / "owner.json"
-    path.write_text(json.dumps(dict(data), indent=2) + "\n", encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        tmp.write_text(json.dumps(dict(data), indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 def bot_id_mismatch_message(stored: str, passed: str, ledger: Path) -> str:
@@ -354,6 +551,15 @@ def read_rows(ledger: Path, filename: str) -> list[dict[str, str]]:
         if reader.fieldnames is None:
             raise LedgerError(f"{filename} has no header row")
         got = list(reader.fieldnames)
+        # Migrate pre-1.1.3 commitments.csv (no due_hint) in place.
+        if filename == COMMITMENTS and got == COMMITMENTS_HEADERS_LEGACY:
+            legacy_rows: list[dict[str, str]] = []
+            for raw in reader:
+                row = {k: (raw.get(k) or "").strip() for k in COMMITMENTS_HEADERS_LEGACY}
+                row["due_hint"] = ""
+                legacy_rows.append(row)
+            write_rows(ledger, COMMITMENTS, legacy_rows)
+            return legacy_rows
         if got != expected:
             raise LedgerError(
                 f"{filename} headers are wrong. "
@@ -366,17 +572,126 @@ def read_rows(ledger: Path, filename: str) -> list[dict[str, str]]:
 
 
 def write_rows(ledger: Path, filename: str, rows: Sequence[Mapping[str, str]]) -> None:
+    """Atomic CSV write: temp file in the same folder, then os.replace."""
     path = ledger / filename
     expected = HEADERS[filename]
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=expected, lineterminator="\n")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({k: row.get(k, "") for k in expected})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        with tmp.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=expected, lineterminator="\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({k: row.get(k, "") for k in expected})
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
-def backup_ledger(ledger: Path, *, keep: int | None = None) -> Path:
-    """Snapshot CSVs (+ notes/, owner.json) before a write. Keeps the last N."""
+def parse_backup_name(name: str) -> tuple[str, str | None]:
+    """Return (stamp, label_or_None). Numeric collision suffixes are not labels."""
+    m = BACKUP_NAME_RE.match(name)
+    if not m:
+        return name, None
+    stamp = m.group("stamp")
+    suffix = m.group("suffix")
+    if suffix is None:
+        return stamp, None
+    if BACKUP_NUMERIC_SUFFIX.match(suffix):
+        return stamp, None
+    # stamp-N-label or stamp-label
+    if "-" in suffix:
+        first, rest = suffix.split("-", 1)
+        if BACKUP_NUMERIC_SUFFIX.match(first):
+            return stamp, rest
+    return stamp, suffix
+
+
+def backup_stamp_datetime(name: str) -> datetime | None:
+    stamp, _label = parse_backup_name(name)
+    try:
+        return datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def protected_backup_names(stamps: Sequence[Path], *, keep: int) -> dict[str, str]:
+    """Map snapshot folder name -> reason it is kept under the retention policy."""
+    ordered = sorted(stamps, key=lambda p: p.name)
+    keep_why: dict[str, str] = {}
+    if not ordered:
+        return keep_why
+    # 1) very first snapshot
+    keep_why[ordered[0].name] = "first snapshot"
+    # 2) every named snapshot
+    for p in ordered:
+        _stamp, label = parse_backup_name(p.name)
+        if label:
+            keep_why[p.name] = f"named:{label}"
+    now = utc_now()
+    # 3) newest of each of the last 14 days
+    by_day: dict[str, Path] = {}
+    for p in ordered:
+        dt = backup_stamp_datetime(p.name)
+        if dt is None:
+            continue
+        if (now.date() - dt.date()).days > 13:
+            continue
+        day_key = dt.date().isoformat()
+        prev = by_day.get(day_key)
+        if prev is None or p.name > prev.name:
+            by_day[day_key] = p
+    for p in by_day.values():
+        keep_why.setdefault(p.name, "daily (last 14 days)")
+    # 4) newest of each of the last 8 weeks (Monday-based week)
+    by_week: dict[str, Path] = {}
+    for p in ordered:
+        dt = backup_stamp_datetime(p.name)
+        if dt is None:
+            continue
+        week = dt.date() - timedelta(days=dt.date().weekday())
+        if (now.date() - week).days > 7 * 7:
+            continue
+        week_key = week.isoformat()
+        prev = by_week.get(week_key)
+        if prev is None or p.name > prev.name:
+            by_week[week_key] = p
+    for p in by_week.values():
+        keep_why.setdefault(p.name, "weekly (last 8 weeks)")
+    # 5) last N recent ones
+    for p in ordered[-keep:]:
+        keep_why.setdefault(p.name, f"recent (last {keep})")
+    return keep_why
+
+
+def prune_backups(ledger: Path, *, keep: int | None = None) -> None:
+    root = backups_dir(ledger)
+    if not root.is_dir():
+        return
+    stamps = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
+    retain = backup_keep_count(keep)
+    protected = protected_backup_names(stamps, keep=retain)
+    for p in stamps:
+        if p.name in protected:
+            continue
+        shutil.rmtree(p, ignore_errors=True)
+
+
+def backup_ledger(
+    ledger: Path,
+    *,
+    keep: int | None = None,
+    label: str | None = None,
+) -> Path:
+    """Snapshot CSVs (+ notes/, owner.json) before a write.
+
+    Retention keeps the first snapshot, every named snapshot, newest of each of
+    the last 14 days, newest of each of the last 8 weeks, plus the last N
+    recent ones. Named snapshots are never pruned automatically.
+    """
     src_files = [ledger / name for name in HEADERS]
     owner = ledger / "owner.json"
     existing = [p for p in src_files if p.exists()]
@@ -385,26 +700,38 @@ def backup_ledger(ledger: Path, *, keep: int | None = None) -> Path:
     if not existing:
         return ledger
     stamp = ts_stamp()
-    dest = backups_dir(ledger) / stamp
+    clean_label = (label or "").strip()
+    if clean_label:
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", clean_label):
+            raise LedgerError(
+                "snapshot label must be a word (letters, digits, _ or -)"
+            )
+        dest = backups_dir(ledger) / f"{stamp}-{clean_label}"
+    else:
+        dest = backups_dir(ledger) / stamp
     # Same-second writes get a numeric suffix so we never collide.
     n = 1
     while dest.exists():
-        dest = backups_dir(ledger) / f"{stamp}-{n}"
+        if clean_label:
+            dest = backups_dir(ledger) / f"{stamp}-{n}-{clean_label}"
+        else:
+            dest = backups_dir(ledger) / f"{stamp}-{n}"
         n += 1
     dest.mkdir(parents=True, exist_ok=False)
     for p in existing:
-        shutil.copy2(p, dest / p.name)
+        safe_copy(p, dest / p.name)
     notes = notes_dir(ledger)
     if notes.is_dir():
-        shutil.copytree(notes, dest / "notes")
-    # prune old backups
-    root = backups_dir(ledger)
-    stamps = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
-    retain = backup_keep_count(keep)
-    while len(stamps) > retain:
-        old = stamps.pop(0)
-        shutil.rmtree(old, ignore_errors=True)
+        safe_copytree(notes, dest / "notes")
+    prune_backups(ledger, keep=keep)
     return dest
+
+
+def maybe_pre_bulk_snapshot(ledger: Path, row_count: int) -> Path | None:
+    """Named pre-bulk snapshot when a write touches more than 10 rows."""
+    if row_count <= PRE_BULK_ROW_THRESHOLD:
+        return None
+    return backup_ledger(ledger, label=PRE_BULK_LABEL)
 
 
 def list_backup_stamps(ledger: Path) -> list[Path]:
@@ -420,17 +747,34 @@ def cmd_backups(args: argparse.Namespace) -> int:
     if not stamps:
         print("no backups yet")
         return 0
+    retain = backup_keep_count()
+    protected = protected_backup_names(stamps, keep=retain)
     print(f"backups in {backups_dir(ledger)} (newest last):")
     for p in stamps:
         files = sorted(x.name for x in p.iterdir())
-        print(f"  {p.name}  ({len(files)} entries)")
-    print(f"count: {len(stamps)} (keep {backup_keep_count()})")
+        why = protected.get(p.name, "pending prune")
+        _stamp, label = parse_backup_name(p.name)
+        label_bit = f" label={label}" if label else ""
+        print(f"  {p.name}  ({len(files)} entries){label_bit}  kept: {why}")
+    print(f"count: {len(stamps)} (recent keep {retain}; named/first/daily/weekly protected)")
+    return 0
+
+
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    """Take a named snapshot that is never pruned automatically."""
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    label = (args.label or "").strip()
+    if not label:
+        die("pass --label <word>")
+    dest = backup_ledger(ledger, label=label)
+    print(f"snapshot {dest.name} (named; never pruned automatically)")
     return 0
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
     """Restore a snapshot. Snapshots the current ledger first."""
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     stamp = args.snapshot.strip()
     if not stamp:
         die("pass a snapshot name (see: backups)")
@@ -445,25 +789,26 @@ def cmd_restore(args: argparse.Namespace) -> int:
     for name in HEADERS:
         candidate = src / name
         if candidate.is_file():
-            shutil.copy2(candidate, ledger / name)
+            safe_copy(candidate, ledger / name)
             restored += 1
     owner_src = src / "owner.json"
     if owner_src.is_file():
-        shutil.copy2(owner_src, ledger / "owner.json")
+        safe_copy(owner_src, ledger / "owner.json")
         restored += 1
     notes_src = src / "notes"
     if notes_src.is_dir():
         dest_notes = notes_dir(ledger)
         if dest_notes.exists():
             shutil.rmtree(dest_notes)
-        shutil.copytree(notes_src, dest_notes)
+        safe_copytree(notes_src, dest_notes)
         restored += 1
+    # Owner-asked restore counts as yes when they passed --approved yes.
     append_log(
         ledger,
         "restore",
         stamp,
         f"restored from backups/{stamp}; pre-restore snapshot {pre.name}",
-        approved="yes",
+        approved=approved,
     )
     print(f"restored {stamp} ({restored} paths). Re-run check next.")
     return 0
@@ -569,8 +914,18 @@ def append_log(
     action: str,
     ref: str,
     detail: str,
-    approved: str = "yes",
+    *,
+    approved: str,
 ) -> None:
+    """Append one log row. approved is required (no default)."""
+    if approved not in APPROVED_LOG_VALUES:
+        raise LedgerError(
+            f"approved_by_owner must be one of {', '.join(APPROVED_LOG_VALUES)}"
+        )
+    if approved == "standing-rule" and "rule=" not in detail and "rule:" not in detail:
+        raise LedgerError(
+            "standing-rule log rows must name the rule in detail (rule=<name>)"
+        )
     rows = read_rows(ledger, LOG) if (ledger / LOG).exists() else []
     rows.append(
         {
@@ -666,7 +1021,7 @@ def write_empty_csvs(dest: Path, *, bot_id: str = "", owner_name: str = "You") -
         if path.exists():
             continue
         if tmpl is not None:
-            shutil.copy2(tmpl / name, path)
+            safe_copy(tmpl / name, path)
         else:
             with path.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=headers, lineterminator="\n")
@@ -786,6 +1141,7 @@ def find_person_dupes(
 
 def cmd_add_person(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     rows = read_rows(ledger, PEOPLE)
     name = args.name.strip()
     if not name:
@@ -874,13 +1230,20 @@ def cmd_add_person(args: argparse.Namespace) -> int:
             reason="changed",
             source="add_person",
         )
-    append_log(ledger, "add_person", pid, f"Added person {name}")
+    append_log(
+        ledger,
+        "add_person",
+        pid,
+        with_rule_detail(args, f"Added person {name}"),
+        approved=approved,
+    )
     print(f"Added {pid}: {name}")
     return 0
 
 
 def cmd_add_org(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     rows = read_rows(ledger, ORGS)
     name = args.name.strip()
     if not name:
@@ -901,13 +1264,20 @@ def cmd_add_org(args: argparse.Namespace) -> int:
     }
     rows.append(row)
     write_rows(ledger, ORGS, rows)
-    append_log(ledger, "add_org", oid, f"Added org {name}")
+    append_log(
+        ledger,
+        "add_org",
+        oid,
+        with_rule_detail(args, f"Added org {name}"),
+        approved=approved,
+    )
     print(f"Added {oid}: {name}")
     return 0
 
 
 def cmd_add_project(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     rows = read_rows(ledger, PROJECTS)
     name = args.name.strip()
     if not name:
@@ -929,13 +1299,20 @@ def cmd_add_project(args: argparse.Namespace) -> int:
     }
     rows.append(row)
     write_rows(ledger, PROJECTS, rows)
-    append_log(ledger, "add_project", jid, f"Added project {name}")
+    append_log(
+        ledger,
+        "add_project",
+        jid,
+        with_rule_detail(args, f"Added project {name}"),
+        approved=approved,
+    )
     print(f"Added {jid}: {name}")
     return 0
 
 
 def cmd_add_commitment(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     rows = read_rows(ledger, COMMITMENTS)
     direction = args.direction.strip()
     if direction not in DIRECTIONS:
@@ -947,11 +1324,21 @@ def cmd_add_commitment(args: argparse.Namespace) -> int:
     if not what:
         die("what is required")
     due = (args.due or "").strip()
+    due_hint = (getattr(args, "due_hint", None) or "").strip()
     status = (args.status or "open").strip()
     if status not in COMMIT_STATUSES:
         die(f"status must be one of {', '.join(COMMIT_STATUSES)}")
+    dateless = owner_dateless_promises(ledger)
     if status == "open":
-        require_iso_date("due", due, allow_empty=False)
+        if due:
+            require_iso_date("due", due, allow_empty=False)
+            due_hint = ""
+        elif dateless:
+            if not due_hint:
+                due_hint = "no date given"
+            # Open promise with no date only when owner setting allows it.
+        else:
+            require_iso_date("due", due, allow_empty=False)
     else:
         require_iso_date("due", due, allow_empty=True)
     source_link = (args.source_link or "").strip()
@@ -966,6 +1353,7 @@ def cmd_add_commitment(args: argparse.Namespace) -> int:
         "person_id": person_id,
         "what": what,
         "due": due,
+        "due_hint": due_hint,
         "status": status,
         "source_link": source_link,
         "created": today,
@@ -973,15 +1361,22 @@ def cmd_add_commitment(args: argparse.Namespace) -> int:
     }
     rows.append(row)
     write_rows(ledger, COMMITMENTS, rows)
-    append_log(ledger, "add_commitment", cid, f"{direction}: {what}")
+    append_log(
+        ledger,
+        "add_commitment",
+        cid,
+        with_rule_detail(args, f"{direction}: {what}"),
+        approved=approved,
+    )
     who = next(r["name"] for r in read_rows(ledger, PEOPLE) if r["person_id"] == person_id)
-    due_bit = f" by {due}" if due else ""
+    due_bit = f" by {due}" if due else (" (no date given)" if due_hint else "")
     print(f"Added {cid}: {direction} {who}: {what}{due_bit}.")
     return 0
 
 
 def cmd_add_interaction(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     rows = read_rows(ledger, INTERACTIONS)
     person_id = args.person_id.strip()
     if person_id not in person_ids(ledger):
@@ -1028,13 +1423,20 @@ def cmd_add_interaction(args: argparse.Namespace) -> int:
                     ledger, p, old_health, source=f"interaction:{iid}"
                 )
             break
-    append_log(ledger, "add_interaction", iid, summary)
+    append_log(
+        ledger,
+        "add_interaction",
+        iid,
+        with_rule_detail(args, summary),
+        approved=approved,
+    )
     print(f"Added {iid}: {when} with {person_id}: {summary}")
     return 0
 
 
 def cmd_add_link(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     rows = read_rows(ledger, LINKS)
     from_id = args.from_id.strip()
     to_id = args.to_id.strip()
@@ -1068,7 +1470,13 @@ def cmd_add_link(args: argparse.Namespace) -> int:
     backup_ledger(ledger)
     rows.append(row)
     write_rows(ledger, LINKS, rows)
-    append_log(ledger, "add_link", f"{from_id}->{to_id}", typ)
+    append_log(
+        ledger,
+        "add_link",
+        f"{from_id}->{to_id}",
+        with_rule_detail(args, typ),
+        approved=approved,
+    )
     print(f"Added link {from_id} -[{typ}]-> {to_id}")
     return 0
 
@@ -1080,6 +1488,9 @@ def _update_row(
     entity_id: str,
     updates: Mapping[str, str],
     action: str,
+    *,
+    approved: str,
+    detail: str | None = None,
 ) -> int:
     rows = read_rows(ledger, filename)
     found = False
@@ -1118,13 +1529,20 @@ def _update_row(
         record_health_change_if_needed(
             ledger, updated_person, old_health, source="update_person"
         )
-    append_log(ledger, action, entity_id, json.dumps(updates, ensure_ascii=False))
+    append_log(
+        ledger,
+        action,
+        entity_id,
+        detail if detail is not None else json.dumps(updates, ensure_ascii=False),
+        approved=approved,
+    )
     print(f"Updated {entity_id}")
     return 0
 
 
 def cmd_update_person(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     updates: dict[str, str] = {}
     for field in (
         "name",
@@ -1158,11 +1576,21 @@ def cmd_update_person(args: argparse.Namespace) -> int:
         die(f"health must be one of {', '.join(HEALTH_VALUES)}")
     if not updates:
         die("nothing to update; pass at least one field")
-    return _update_row(ledger, PEOPLE, "person_id", args.id, updates, "update_person")
+    return _update_row(
+        ledger,
+        PEOPLE,
+        "person_id",
+        args.id,
+        updates,
+        "update_person",
+        approved=approved,
+        detail=with_rule_detail(args, json.dumps(updates, ensure_ascii=False)),
+    )
 
 
 def cmd_update_org(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     updates: dict[str, str] = {}
     for field in ("name", "aliases", "domains"):
         val = getattr(args, field, None)
@@ -1170,11 +1598,21 @@ def cmd_update_org(args: argparse.Namespace) -> int:
             updates[field] = str(val).strip()
     if not updates:
         die("nothing to update")
-    return _update_row(ledger, ORGS, "org_id", args.id, updates, "update_org")
+    return _update_row(
+        ledger,
+        ORGS,
+        "org_id",
+        args.id,
+        updates,
+        "update_org",
+        approved=approved,
+        detail=with_rule_detail(args, json.dumps(updates, ensure_ascii=False)),
+    )
 
 
 def cmd_update_project(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     updates: dict[str, str] = {}
     for field in ("name", "aliases", "org_id", "status"):
         val = getattr(args, field, None)
@@ -1186,15 +1624,27 @@ def cmd_update_project(args: argparse.Namespace) -> int:
         die(f"status must be one of {', '.join(PROJECT_STATUSES)}")
     if not updates:
         die("nothing to update")
-    return _update_row(ledger, PROJECTS, "project_id", args.id, updates, "update_project")
+    return _update_row(
+        ledger,
+        PROJECTS,
+        "project_id",
+        args.id,
+        updates,
+        "update_project",
+        approved=approved,
+        detail=with_rule_detail(args, json.dumps(updates, ensure_ascii=False)),
+    )
 
 
 def cmd_update_commitment(args: argparse.Namespace) -> int:
     """Update open-promise fields. Use close for status changes."""
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     updates: dict[str, str] = {}
     if args.due is not None:
         updates["due"] = str(args.due).strip()
+    if getattr(args, "due_hint", None) is not None:
+        updates["due_hint"] = str(args.due_hint).strip()
     if args.what is not None:
         updates["what"] = str(args.what).strip()
     if args.person_id is not None:
@@ -1202,7 +1652,11 @@ def cmd_update_commitment(args: argparse.Namespace) -> int:
     if args.source_link is not None:
         updates["source_link"] = str(args.source_link).strip()
     if not updates:
-        die("nothing to update; pass --due, --what, --person-id, and/or --source-link")
+        die(
+            "nothing to update; pass --due, --due-hint, --what, --person-id, "
+            "and/or --source-link"
+        )
+    dateless = owner_dateless_promises(ledger)
     rows = read_rows(ledger, COMMITMENTS)
     found = False
     for r in rows:
@@ -1218,22 +1672,37 @@ def cmd_update_commitment(args: argparse.Namespace) -> int:
             die("source_link cannot be empty")
         if "due" in updates:
             status = r["status"]
-            if status == "open":
+            if status == "open" and updates["due"]:
                 require_iso_date("due", updates["due"], allow_empty=False)
+            elif status == "open" and not updates["due"]:
+                if not dateless:
+                    require_iso_date("due", updates["due"], allow_empty=False)
             else:
                 require_iso_date("due", updates["due"], allow_empty=True)
         for k, v in updates.items():
             r[k] = v
-        # Open commitments must keep a due date after any update.
+        if r["status"] == "open" and r["due"]:
+            r["due_hint"] = ""
+        # Open commitments need a due date unless dateless_promises is on.
         if r["status"] == "open" and not r["due"]:
-            die("due date missing. Ask the owner once; open promises need a due date.")
+            if dateless:
+                if not (r.get("due_hint") or "").strip():
+                    r["due_hint"] = "no date given"
+            else:
+                die(
+                    "due date missing. Ask the owner once; open promises need a due date."
+                )
         break
     if not found:
         die(f"{args.id} not found in commitments.csv")
     backup_ledger(ledger)
     write_rows(ledger, COMMITMENTS, rows)
     append_log(
-        ledger, "update_commitment", args.id, json.dumps(updates, ensure_ascii=False)
+        ledger,
+        "update_commitment",
+        args.id,
+        with_rule_detail(args, json.dumps(updates, ensure_ascii=False)),
+        approved=approved,
     )
     print(f"Updated {args.id}")
     return 0
@@ -1241,6 +1710,7 @@ def cmd_update_commitment(args: argparse.Namespace) -> int:
 
 def cmd_close(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     status = args.status.strip()
     if status not in COMMIT_STATUSES or status == "open":
         die("status must be done, dropped, or renegotiated")
@@ -1257,7 +1727,13 @@ def cmd_close(args: argparse.Namespace) -> int:
         die(f"{args.id} not found in commitments.csv")
     backup_ledger(ledger)
     write_rows(ledger, COMMITMENTS, rows)
-    append_log(ledger, "close_commitment", args.id, status)
+    append_log(
+        ledger,
+        "close_commitment",
+        args.id,
+        with_rule_detail(args, status),
+        approved=approved,
+    )
     print(f"Closed {args.id} as {status}")
     return 0
 
@@ -1265,11 +1741,13 @@ def cmd_close(args: argparse.Namespace) -> int:
 def cmd_health_snapshot(args: argparse.Namespace) -> int:
     """Append weekly health_history rows for every person."""
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     people = read_rows(ledger, PEOPLE)
     if not people:
         print("no people to snapshot")
         return 0
     today = today_iso()
+    maybe_pre_bulk_snapshot(ledger, len(people))
     backup_ledger(ledger)
     # Refresh derived health, then write one weekly row per person.
     old_health_by_id: dict[str, str] = {}
@@ -1303,7 +1781,13 @@ def cmd_health_snapshot(args: argparse.Namespace) -> int:
             old_health_by_id.get(p["person_id"], ""),
             source="health snapshot",
         )
-    append_log(ledger, "health_snapshot", today, f"weekly rows for {len(people)} people")
+    append_log(
+        ledger,
+        "health_snapshot",
+        today,
+        f"weekly rows for {len(people)} people",
+        approved=approved,
+    )
     print(f"Wrote weekly health snapshot for {len(people)} people.")
     return 0
 
@@ -1315,6 +1799,7 @@ def cmd_health_snapshot(args: argparse.Namespace) -> int:
 
 def cmd_merge(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     kept = args.kept.strip()
     merged = args.merged.strip()
     if kept == merged:
@@ -1413,7 +1898,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
             "merged_id": merged,
             "evidence": evidence,
             "repointed_rows": str(repointed),
-            "approved_by_owner": "yes",
+            "approved_by_owner": approved,
         }
     )
     write_rows(ledger, MERGES, merges)
@@ -1421,8 +1906,10 @@ def cmd_merge(args: argparse.Namespace) -> int:
         ledger,
         "merge",
         mid,
-        f"kept {kept}, merged {merged}, repointed {repointed}",
-        approved="yes",
+        with_rule_detail(
+            args, f"kept {kept}, merged {merged}, repointed {repointed}"
+        ),
+        approved=approved,
     )
     print(f"Merged {merged} into {kept} ({mid}); repointed {repointed} fields.")
     return 0
@@ -1444,6 +1931,7 @@ def _forget_target_exists(ledger: Path, target: str) -> bool:
 
 def cmd_forget(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
     target = args.id.strip()
     if not args.yes:
         die("forget permanently deletes data. Pass --yes after the owner confirms.")
@@ -1528,7 +2016,13 @@ def cmd_forget(args: argparse.Namespace) -> int:
             if note.exists():
                 note.unlink()
 
-    append_log(ledger, "forget", target, "forgotten on request", approved="yes")
+    append_log(
+        ledger,
+        "forget",
+        target,
+        with_rule_detail(args, "forgotten on request"),
+        approved=approved,
+    )
     print(f"Forgotten {target}. Removed: {', '.join(removed) or 'nothing matched'}.")
     print("Logged only: forgotten on request.")
     return 0
@@ -1964,10 +2458,18 @@ def cmd_check(args: argparse.Namespace) -> int:
             problems.append(
                 f"Commitment {r['commit_id']}: due {r['due']!r} is not YYYY-MM-DD"
             )
+        dateless = owner_dateless_promises(ledger)
         if r["status"] == "open" and not r["due"]:
-            problems.append(
-                f"Commitment {r['commit_id']} is open but has no due date: ask the owner once."
-            )
+            hint = (r.get("due_hint") or "").strip()
+            if dateless and hint:
+                warnings.append(
+                    f"{r['commit_id']} has no date; ask once a week"
+                )
+            else:
+                problems.append(
+                    f"Commitment {r['commit_id']} is open but has no due date: "
+                    "ask the owner once."
+                )
         if r["status"] == "open" and r["due"] and r["due"] < today:
             warnings.append(
                 f"Commitment {r['commit_id']} is overdue (due {r['due']})."
@@ -2026,6 +2528,29 @@ def cmd_check(args: argparse.Namespace) -> int:
                 "use a qualifier like 'Sarah K. (Acme)' when talking about them."
             )
 
+    # Honest approval: warn on legacy rows that claimed owner yes for upkeep.
+    # Never rewrite history.
+    try:
+        log_rows = read_rows(ledger, LOG) if (ledger / LOG).exists() else []
+    except LedgerError:
+        log_rows = []
+    upkeep_actions = {"health_snapshot"}
+    for r in log_rows:
+        approved = (r.get("approved_by_owner") or "").strip()
+        action = (r.get("action") or "").strip()
+        if approved and approved not in APPROVED_LOG_VALUES:
+            warnings.append(
+                f"Log {r.get('log_id')}: unknown approved_by_owner={approved!r}. "
+                "Not rewritten."
+            )
+            continue
+        if action in upkeep_actions and approved == "yes":
+            warnings.append(
+                f"Log {r.get('log_id')}: {action} has approved_by_owner=yes but "
+                "looks like internal upkeep (expected no-approval-needed). "
+                "Not rewritten."
+            )
+
     if problems:
         print("CHECK FAILED - fix these before refreshing Claudia's Brain:")
         for p in problems:
@@ -2039,6 +2564,592 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"  - {w}")
 
     return 1 if problems else 0
+
+
+
+# ---------------------------------------------------------------------------
+# Doctor / half-built cleanup
+# ---------------------------------------------------------------------------
+
+
+def _home_is_writable(home: Path) -> bool:
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        probe = home / ".claudia_write_probe"
+        probe.write_text("ok\n", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+def _ledger_file_count(ledger: Path) -> int:
+    if not ledger.is_dir():
+        return 0
+    return sum(1 for name in HEADERS if (ledger / name).is_file())
+
+
+def _is_half_built_home(home: Path, *, expected_bot_id: str = "") -> tuple[bool, str]:
+    """Half-built: tools present but no owner.json, or owner.json bot_id differs."""
+    tools = home / "tools"
+    ledger = home / "ledger"
+    has_tools = tools.is_dir() and any(tools.rglob("*.py"))
+    owner_path = ledger / "owner.json"
+    if not has_tools and not owner_path.exists() and not ledger.is_dir():
+        return False, ""
+    if has_tools and not owner_path.exists():
+        return True, "tools present but owner.json missing"
+    if owner_path.exists():
+        data = load_owner_json(ledger)
+        stored = str(data.get("bot_id") or "").strip()
+        if expected_bot_id and stored and stored != expected_bot_id:
+            return True, f"owner.json bot_id={stored!r} differs from {expected_bot_id!r}"
+        if has_tools and not stored and expected_bot_id:
+            return True, "owner.json missing bot_id while tools are present"
+    return False, ""
+
+
+def _ledger_has_data_rows(ledger: Path) -> bool:
+    """True if any CSV has a data row beyond the header."""
+    if not ledger.is_dir():
+        return False
+    for name in HEADERS:
+        path = ledger / name
+        if not path.is_file():
+            continue
+        try:
+            with path.open(newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if header is None:
+                    continue
+                for row in reader:
+                    if any((c or "").strip() for c in row):
+                        return True
+        except OSError:
+            continue
+    return False
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Read-only health report for a Claudia home."""
+    home = Path(args.home_path)
+    ledger = Path(args.ledger)
+    bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=False) or ""
+    writable = _home_is_writable(home)
+    print(f"home: {home}")
+    print(f"writable: {'yes' if writable else 'no'}")
+    print(f"tools VERSION: {tools_version()}")
+    print(f"ledger file count: {_ledger_file_count(ledger)}")
+    half, reason = _is_half_built_home(home, expected_bot_id=bot_id)
+    if half:
+        print(f"half-built: yes ({reason})")
+        print(
+            f"NOTE: if this folder failed mid-install, run "
+            f"cleanup-half-built --home {home} only when it has no ledger rows."
+        )
+    else:
+        print("half-built: no")
+    # Also scan sibling candidate folders under parent when they look like claudia homes.
+    parent = home.parent
+    extras: list[str] = []
+    if parent.is_dir():
+        for child in sorted(parent.iterdir()):
+            if not child.is_dir() or child.resolve() == home.resolve():
+                continue
+            name = child.name.lower()
+            if "claudia" not in name and child.name != "claudia":
+                continue
+            hb, why = _is_half_built_home(child, expected_bot_id=bot_id)
+            if hb:
+                extras.append(f"{child} ({why})")
+    if extras:
+        print("other half-built folders:")
+        for e in extras:
+            print(f"  - {e}")
+    return 0
+
+
+def cmd_cleanup_half_built(args: argparse.Namespace) -> int:
+    """Delete a half-built home only when ledger CSVs have no data rows."""
+    raw = args.cleanup_dir or str(args.home_path)
+    target = Path(raw).expanduser().resolve()
+    if not target.exists():
+        die(f"folder not found: {target}")
+    bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=False) or ""
+    half, reason = _is_half_built_home(target, expected_bot_id=bot_id)
+    if not half:
+        # Still allow cleanup when tools exist without a finished owner.json shape.
+        tools = target / "tools"
+        ledger = target / "ledger"
+        if not (tools.is_dir() or ledger.is_dir()):
+            die(f"not a Claudia home (no tools/ or ledger/): {target}")
+        if (ledger / "owner.json").exists() and _ledger_has_data_rows(ledger):
+            die(
+                f"refusing to delete {target}: ledger has data rows beyond headers. "
+                "Not half-built empty."
+            )
+        if (ledger / "owner.json").exists() and not reason:
+            # Finished home with matching bot - refuse.
+            stored = str(load_owner_json(ledger).get("bot_id") or "").strip()
+            if stored and (not bot_id or stored == bot_id):
+                die(
+                    f"refusing to delete {target}: looks like a finished home "
+                    f"(owner.json bot_id={stored!r})"
+                )
+    ledger = target / "ledger"
+    if _ledger_has_data_rows(ledger):
+        die(
+            f"refusing to delete {target}: ledger has data rows beyond headers. "
+            "It is not safe to remove."
+        )
+    shutil.rmtree(target)
+    print(f"deleted half-built folder {target}" + (f" ({reason})" if reason else ""))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Propose / apply links
+# ---------------------------------------------------------------------------
+
+
+def _person_domain(email: str) -> str:
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return ""
+    return email.split("@", 1)[1].strip()
+
+
+def _subject_tokens(text: str) -> set[str]:
+    stop = {
+        "the", "and", "for", "with", "from", "that", "this", "have", "will",
+        "your", "about", "into", "just", "been", "were", "they", "them",
+        "meeting", "call", "chat", "email", "today", "tomorrow", "week",
+    }
+    words = SUBJECT_WORD_RE.findall((text or "").lower())
+    return {w for w in words if w not in stop and len(w) >= 3}
+
+
+def _existing_link_keys(ledger: Path) -> set[tuple[str, str, str]]:
+    keys: set[tuple[str, str, str]] = set()
+    if not (ledger / LINKS).exists():
+        return keys
+    for r in read_rows(ledger, LINKS):
+        keys.add((r["from_id"], r["to_id"], r["type"]))
+        keys.add((r["to_id"], r["from_id"], r["type"]))
+    return keys
+
+
+def propose_link_candidates(ledger: Path) -> dict[str, Any]:
+    """Build link/project candidates from interactions and people (read-only)."""
+    people = read_rows(ledger, PEOPLE) if (ledger / PEOPLE).exists() else []
+    interactions = (
+        read_rows(ledger, INTERACTIONS) if (ledger / INTERACTIONS).exists() else []
+    )
+    by_id = {p["person_id"]: p for p in people}
+    existing = _existing_link_keys(ledger)
+    candidates: list[dict[str, Any]] = []
+    projects: list[dict[str, Any]] = []
+    next_id = 1
+
+    def add_cand(
+        from_id: str,
+        to_id: str,
+        typ: str,
+        evidence: list[str],
+        reason: str,
+        *,
+        project_name: str = "",
+        member_ids: list[str] | None = None,
+    ) -> None:
+        nonlocal next_id
+        if from_id == to_id:
+            return
+        if not evidence:
+            return
+        if (from_id, to_id, typ) in existing:
+            return
+        # De-dupe against candidates already queued.
+        for c in candidates:
+            if (
+                c["from_id"] == from_id
+                and c["to_id"] == to_id
+                and c["type"] == typ
+            ):
+                return
+            if (
+                c["from_id"] == to_id
+                and c["to_id"] == from_id
+                and c["type"] == typ
+                and typ == "works_with"
+            ):
+                return
+        cid = f"LC-{next_id:04d}"
+        next_id += 1
+        candidates.append(
+            {
+                "id": cid,
+                "from_id": from_id,
+                "to_id": to_id,
+                "type": typ,
+                "basis": "inferred",
+                "evidence": evidence[:3],
+                "reason": reason,
+                "project_name": project_name,
+                "member_ids": member_ids or [],
+            }
+        )
+
+    # 1) Shared thread or meeting (same source_link)
+    by_link: dict[str, list[dict[str, str]]] = {}
+    for row in interactions:
+        link = (row.get("source_link") or "").strip()
+        if not link:
+            continue
+        by_link.setdefault(link, []).append(row)
+    for link, rows in by_link.items():
+        pids = sorted({r["person_id"] for r in rows if r.get("person_id") in by_id})
+        if len(pids) < 2:
+            continue
+        for i, a in enumerate(pids):
+            for b in pids[i + 1 :]:
+                add_cand(
+                    a,
+                    b,
+                    "works_with",
+                    [link],
+                    "shared thread or meeting",
+                )
+
+    # 2) Same org domain
+    by_domain: dict[str, list[str]] = {}
+    for p in people:
+        dom = _person_domain(p.get("email") or "")
+        if not dom:
+            continue
+        # Skip public mail hosts so example.com still works in fixtures.
+        by_domain.setdefault(dom, []).append(p["person_id"])
+    for dom, pids in by_domain.items():
+        uniq = sorted(set(pids))
+        if len(uniq) < 2:
+            continue
+        for i, a in enumerate(uniq):
+            org_a = by_id[a].get("org_id") or ""
+            for b in uniq[i + 1 :]:
+                org_b = by_id[b].get("org_id") or ""
+                if org_a and org_a == org_b:
+                    add_cand(
+                        a,
+                        org_a,
+                        "member_of",
+                        [f"domain:{dom}"],
+                        f"same org domain {dom}",
+                    )
+                    add_cand(
+                        b,
+                        org_b,
+                        "member_of",
+                        [f"domain:{dom}"],
+                        f"same org domain {dom}",
+                    )
+                add_cand(
+                    a,
+                    b,
+                    "works_with",
+                    [f"domain:{dom}"],
+                    f"same email domain {dom}",
+                )
+
+    # 3) Introductions: interaction text names two people
+    name_to_ids: dict[str, list[str]] = {}
+    for p in people:
+        name_to_ids.setdefault(p["name"].strip().lower(), []).append(p["person_id"])
+        for alias in (p.get("aliases") or "").split(";"):
+            alias = alias.strip().lower()
+            if alias:
+                name_to_ids.setdefault(alias, []).append(p["person_id"])
+
+    for row in interactions:
+        summary = row.get("summary") or ""
+        if not INTRO_WORDS.search(summary):
+            continue
+        mentioned: list[str] = []
+        lower = summary.lower()
+        for name, ids in name_to_ids.items():
+            if name and name in lower:
+                mentioned.extend(ids)
+        mentioned = sorted(set(mentioned))
+        actor_pid = row.get("person_id") or ""
+        evidence = [row.get("source_link") or row.get("int_id") or ""]
+        evidence = [e for e in evidence if e]
+        if len(mentioned) >= 2:
+            a, b = mentioned[0], mentioned[1]
+            introducer = actor_pid if actor_pid in by_id else a
+            other = b if introducer != b else a
+            add_cand(
+                other,
+                introducer,
+                "introduced_by",
+                evidence,
+                "introduction wording in interaction",
+            )
+            add_cand(
+                a,
+                b,
+                "works_with",
+                evidence,
+                "introduced to each other",
+            )
+
+    # 4) Repeated subject words across 3+ interactions with 2+ people -> project
+    token_map: dict[str, list[dict[str, str]]] = {}
+    for row in interactions:
+        for tok in _subject_tokens(row.get("summary") or ""):
+            token_map.setdefault(tok, []).append(row)
+    for tok, rows in token_map.items():
+        if len(rows) < 3:
+            continue
+        pids = sorted({r["person_id"] for r in rows if r.get("person_id") in by_id})
+        if len(pids) < 2:
+            continue
+        evidence = []
+        for r in rows:
+            sl = (r.get("source_link") or "").strip()
+            if sl and sl not in evidence:
+                evidence.append(sl)
+            if len(evidence) >= 3:
+                break
+        if not evidence:
+            evidence = [r.get("int_id") or "" for r in rows[:3]]
+            evidence = [e for e in evidence if e]
+        if not evidence:
+            continue
+        proj_name = f"Example {tok.title()} Project"
+        # Prefer a readable multi-word subject if the token looks like a title fragment.
+        proj_name = f"{tok.replace('_', ' ').title()} Work"
+        projects.append(
+            {
+                "id": f"JP-{len(projects)+1:04d}",
+                "name": proj_name,
+                "member_ids": pids,
+                "evidence": evidence[:3],
+                "reason": f"repeated subject '{tok}' across {len(rows)} interactions",
+            }
+        )
+        # Candidate project id placeholder used in links until apply creates J-####.
+        temp_jid = f"NEW-PROJECT:{proj_name}"
+        for pid in pids:
+            add_cand(
+                pid,
+                temp_jid,
+                "part_of_project",
+                evidence[:3],
+                f"repeated subject '{tok}'",
+                project_name=proj_name,
+                member_ids=pids,
+            )
+        for i, a in enumerate(pids):
+            for b in pids[i + 1 :]:
+                add_cand(
+                    a,
+                    b,
+                    "works_with",
+                    evidence[:3],
+                    f"shared project subject '{tok}'",
+                    project_name=proj_name,
+                    member_ids=pids,
+                )
+
+    question = _group_link_question(candidates, projects, by_id)
+    return {
+        "candidates": candidates,
+        "projects": projects,
+        "question": question,
+        "generated": ts_iso(),
+    }
+
+
+def _group_link_question(
+    candidates: list[dict[str, Any]],
+    projects: list[dict[str, Any]],
+    by_id: Mapping[str, Mapping[str, str]],
+) -> str:
+    if not candidates and not projects:
+        return "No link candidates found."
+    bits: list[str] = []
+    # Project-centric summary
+    for proj in projects:
+        names = [
+            by_id[pid]["name"]
+            for pid in proj.get("member_ids") or []
+            if pid in by_id
+        ]
+        if names:
+            bits.append(
+                f"these {len(names)} people work together on the {proj['name']}"
+            )
+    intro = [
+        c
+        for c in candidates
+        if c["type"] == "introduced_by"
+    ]
+    for c in intro[:2]:
+        # introduced_by: from_id was introduced, to_id is the introducer.
+        introduced = by_id.get(c["from_id"], {}).get("name", c["from_id"])
+        introducer = by_id.get(c["to_id"], {}).get("name", c["to_id"])
+        bits.append(f"{introducer} introduced you to {introduced}")
+    if not bits:
+        bits.append(f"{len(candidates)} possible links from shared threads and domains")
+    n = len(candidates)
+    joined = ", and ".join(bits[:3])
+    return (
+        f"I think {joined}. Add these {n} links? (yes / pick / no)"
+    )
+
+
+def cmd_propose_links(args: argparse.Namespace) -> int:
+    """Read-only link proposals written only to work/link-candidates.json."""
+    home = Path(args.home_path)
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    work = home / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    payload = propose_link_candidates(ledger)
+    out = work / "link-candidates.json"
+    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"wrote {out} ({len(payload['candidates'])} candidates)")
+    print(payload["question"])
+    return 0
+
+
+def cmd_apply_links(args: argparse.Namespace) -> int:
+    """Apply picked link candidates with basis owner-confirmed."""
+    home = Path(args.home_path)
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    approved = resolve_approved(args)
+    path = Path(args.file).expanduser()
+    if not path.is_file():
+        # Allow relative to home/work
+        alt = home / args.file
+        path = alt if alt.is_file() else path
+    if not path.is_file():
+        die(f"candidates file not found: {args.file}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        die(f"invalid candidates JSON: {e}")
+    candidates = list(payload.get("candidates") or [])
+    projects = list(payload.get("projects") or [])
+    pick_raw = (args.pick or "").strip()
+    if not pick_raw:
+        die("pass --pick all or --pick LC-0001,LC-0002")
+    if pick_raw.lower() == "all":
+        chosen = candidates
+    else:
+        wanted = {x.strip() for x in pick_raw.split(",") if x.strip()}
+        chosen = [c for c in candidates if c.get("id") in wanted]
+        missing = wanted - {c.get("id") for c in chosen}
+        if missing:
+            die(f"unknown candidate ids: {', '.join(sorted(missing))}")
+    if not chosen:
+        print("nothing to apply")
+        return 0
+
+    maybe_pre_bulk_snapshot(ledger, max(len(chosen), PRE_BULK_ROW_THRESHOLD + 1))
+    # Create projects referenced by chosen part_of_project candidates.
+    created_projects: dict[str, str] = {}
+    project_rows = read_rows(ledger, PROJECTS) if (ledger / PROJECTS).exists() else []
+    for c in chosen:
+        pname = (c.get("project_name") or "").strip()
+        if not pname or c.get("type") != "part_of_project":
+            continue
+        if pname in created_projects:
+            continue
+        existing = next(
+            (r for r in project_rows if r["name"].strip().lower() == pname.lower()),
+            None,
+        )
+        if existing:
+            created_projects[pname] = existing["project_id"]
+            continue
+        jid = allocate_id(ledger, PROJECTS)
+        project_rows.append(
+            {
+                "project_id": jid,
+                "name": pname,
+                "aliases": "",
+                "org_id": "",
+                "status": "active",
+            }
+        )
+        created_projects[pname] = jid
+        append_log(
+            ledger,
+            "add_project",
+            jid,
+            with_rule_detail(args, f"Added project {pname} via apply-links"),
+            approved=approved,
+        )
+    if created_projects:
+        write_rows(ledger, PROJECTS, project_rows)
+
+    link_rows = read_rows(ledger, LINKS) if (ledger / LINKS).exists() else []
+    existing = {(r["from_id"], r["to_id"], r["type"]) for r in link_rows}
+    applied = 0
+    for c in chosen:
+        from_id = str(c.get("from_id") or "")
+        to_id = str(c.get("to_id") or "")
+        typ = str(c.get("type") or "")
+        pname = (c.get("project_name") or "").strip()
+        if to_id.startswith("NEW-PROJECT:"):
+            to_id = created_projects.get(pname) or created_projects.get(
+                to_id.split(":", 1)[-1], ""
+            )
+            if not to_id:
+                # Create on the fly if project list missed it.
+                if pname:
+                    jid = allocate_id(ledger, PROJECTS)
+                    project_rows.append(
+                        {
+                            "project_id": jid,
+                            "name": pname,
+                            "aliases": "",
+                            "org_id": "",
+                            "status": "active",
+                        }
+                    )
+                    write_rows(ledger, PROJECTS, project_rows)
+                    created_projects[pname] = jid
+                    to_id = jid
+        if not from_id or not to_id or not typ:
+            continue
+        if (from_id, to_id, typ) in existing:
+            continue
+        evidence = c.get("evidence") or []
+        source = "; ".join(evidence[:3]) if isinstance(evidence, list) else str(evidence)
+        link_rows.append(
+            {
+                "from_id": from_id,
+                "to_id": to_id,
+                "type": typ,
+                "basis": "owner-confirmed",
+                "source": source,
+            }
+        )
+        existing.add((from_id, to_id, typ))
+        applied += 1
+        append_log(
+            ledger,
+            "apply_links",
+            f"{from_id}->{to_id}",
+            with_rule_detail(
+                args, f"{typ}; candidate {c.get('id')}; {c.get('reason')}"
+            ),
+            approved=approved,
+        )
+    write_rows(ledger, LINKS, link_rows)
+    print(f"applied {applied} links (owner-confirmed)")
+    return 0
+
 
 
 # ---------------------------------------------------------------------------
@@ -2096,6 +3207,21 @@ examples:
             f"How many backups to keep (default {BACKUP_KEEP}, "
             "or CLAUDIA_BACKUP_KEEP)"
         ),
+    )
+    p.add_argument(
+        "--approved",
+        choices=APPROVED_FLAG_VALUES,
+        default=None,
+        help=(
+            "Required for writes that change people, promises, or links. "
+            "yes = owner said yes in chat; standing-rule = saved owner rule "
+            "(pass --rule); no-approval-needed = internal upkeep."
+        ),
+    )
+    p.add_argument(
+        "--rule",
+        default=None,
+        help="Saved owner rule name (required with --approved standing-rule)",
     )
 
     sub = p.add_subparsers(dest="command", required=True)
@@ -2161,7 +3287,13 @@ examples:
     ac.add_argument(
         "--due",
         default="",
-        help="Due date YYYY-MM-DD (required for open commitments)",
+        help="Due date YYYY-MM-DD (required for open commitments unless dateless_promises)",
+    )
+    ac.add_argument(
+        "--due-hint",
+        dest="due_hint",
+        default="",
+        help='When dateless_promises is on: use "no date given" for open promises without a due',
     )
     ac.add_argument("--status", default="open", choices=COMMIT_STATUSES)
     ac.add_argument("--source-link", dest="source_link", required=True)
@@ -2232,6 +3364,7 @@ examples:
     )
     uc.add_argument("--id", required=True)
     uc.add_argument("--due", default=None)
+    uc.add_argument("--due-hint", dest="due_hint", default=None)
     uc.add_argument("--what", default=None)
     uc.add_argument("--person-id", dest="person_id", default=None)
     uc.add_argument("--source-link", dest="source_link", default=None)
@@ -2359,6 +3492,53 @@ examples:
     )
     p_restore.set_defaults(func=cmd_restore)
 
+    p_snap = sub.add_parser(
+        "snapshot",
+        help="Take a named snapshot that is never pruned automatically",
+    )
+    p_snap.add_argument("--label", required=True, help="Word label for the snapshot folder")
+    p_snap.set_defaults(func=cmd_snapshot)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="Read-only report: home path, writable, VERSION, ledger files, half-built",
+    )
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    p_clean = sub.add_parser(
+        "cleanup-half-built",
+        help="Delete a half-built Claudia folder only if it has no ledger data rows",
+    )
+    p_clean.add_argument(
+        "cleanup_dir",
+        nargs="?",
+        default=None,
+        help="Folder to delete (default: --home)",
+    )
+    p_clean.set_defaults(func=cmd_cleanup_half_built)
+
+    p_prop = sub.add_parser(
+        "propose-links",
+        help="Propose relationship links into work/link-candidates.json (read-only ledger)",
+    )
+    p_prop.set_defaults(func=cmd_propose_links)
+
+    p_apply = sub.add_parser(
+        "apply-links",
+        help="Write picked link candidates with basis owner-confirmed",
+    )
+    p_apply.add_argument(
+        "--file",
+        default="work/link-candidates.json",
+        help="Candidates JSON (default: work/link-candidates.json under --home)",
+    )
+    p_apply.add_argument(
+        "--pick",
+        required=True,
+        help="all, or comma-separated candidate ids (LC-0001,LC-0002)",
+    )
+    p_apply.set_defaults(func=cmd_apply_links)
+
     return p
 
 
@@ -2380,7 +3560,13 @@ def main(argv: list[str] | None = None) -> int:
     bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=needs_bot)
     args.bot_id = bot_id or None
     # Refuse writes into another bot's ledger. Mismatch always blocks.
-    if needs_bot and args.command != "init" and bot_id and Path(args.ledger).exists():
+    # cleanup-half-built may target a half-built folder with a mismatched id.
+    if (
+        needs_bot
+        and args.command not in {"init", "cleanup-half-built"}
+        and bot_id
+        and Path(args.ledger).exists()
+    ):
         verify_bot_id(Path(args.ledger), bot_id, hard=True)
     elif (
         not needs_bot

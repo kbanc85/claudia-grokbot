@@ -30,12 +30,13 @@ Each line is one object:
 | `who_owes` | string | Who owes the deliverable |
 | `owed_to` | string | Who is owed |
 | `what` | string | Short deliverable |
-| `due` | string or null | `YYYY-MM-DD` when resolved |
+| `due` | string or null | `YYYY-MM-DD` when resolved, or empty when `needs_due` |
 | `direction` | string | `I owe`, `owed to me`, or `third party` |
-| `confidence` | number | 0..1 |
+| `confidence` | number | 0..1 (low when `needs_due`) |
+| `needs_due` | bool | True when everyday wording has no date; ask the owner |
 | `reasons` | string[] | Why this was proposed |
 
-Relative dates (`Friday`, `tomorrow`, `next week`, `EOD`, …) resolve against the item's `date`.
+Relative dates (`Friday`, `tomorrow`, `next week`, `EOD`) resolve against the item's `date`. Everyday wording such as "Let me send that over" or "I'll get back to you" is proposed even without a date (`needs_due: true`). Soft phrases like "let me know" are skipped.
 
 ## Policy
 
@@ -44,4 +45,5 @@ Conservative: precision over recall. Vague catch-ups, already-done statements, p
 ```bash
 python3 scan/claudia_scan.py --input items.jsonl \
   --owner-name "Sam Chen" --owner-email sam@example.com
+python3 scan/claudia_scan.py --input items.jsonl --owner-name "Sam Chen" --explain
 ```

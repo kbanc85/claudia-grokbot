@@ -18,7 +18,7 @@ export CLAUDIA_BOT_ID=<your-bot-id>
 bash "$TMP/first_run.sh" --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID"
 ```
 
-That creates `$CLAUDIA_HOME/tools`, `$CLAUDIA_HOME/ledger`, and `$CLAUDIA_HOME/work`, runs ledger init/check, and builds an empty Brain. Re-running first_run refreshes tools quietly (no "same file" chatter) and never wipes people or promises.
+That creates `$CLAUDIA_HOME/tools`, `$CLAUDIA_HOME/ledger`, and `$CLAUDIA_HOME/work`, runs ledger init/check, and builds an empty Brain. Re-running first_run refreshes tools quietly (no "same file" chatter) and never wipes people or promises. Before success it writes and deletes a probe file in `$CLAUDIA_HOME` and runs `init`.
 
 Day-to-day tool updates use `claudia_update.py` and **only trigger when `VERSION` bumps** on the hosted repo. Re-running first_run is fine anytime; it refreshes the local tool copy and leaves ledger data alone.
 
@@ -27,8 +27,9 @@ Day-to-day tool updates use `claudia_update.py` and **only trigger when `VERSION
 One owner's bots share one Linux box. Each Claudia copy must use its **own** home so ledgers never mix.
 
 1. Prefer a persistent store if you have one: `/cursor/stores/<your-store>/claudia`
-2. Otherwise use a folder named after your bot id: `/workspace/claudia-<bot-id>`
-3. Export and remember both values in memory for every routine:
+2. If store install fails: run `doctor`, clean up the half-built folder with `cleanup-half-built` only when it has no ledger rows, then fall back to `/workspace/claudia-<bot-id>`. Never keep two homes.
+3. Otherwise use a folder named after your bot id: `/workspace/claudia-<bot-id>`
+4. Export and remember both values in memory for every routine:
 
 ```bash
 export CLAUDIA_HOME=/cursor/stores/<your-store>/claudia   # or /workspace/claudia-<bot-id>
@@ -49,7 +50,7 @@ Layout under `$CLAUDIA_HOME`:
 
 ## Version
 
-Current: **1.1.2** (see `CHANGELOG.md`).
+Current: **1.1.3** (see `CHANGELOG.md`).
 
 Before any routine that depends on these tools:
 
@@ -82,8 +83,31 @@ R="$CLAUDIA_HOME/tools/templates/claudia_render.py"
 S="$CLAUDIA_HOME/tools/scan/claudia_scan.py"
 U="$CLAUDIA_HOME/tools/update/claudia_update.py"
 H=(--home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID")
+# Writes that change people, promises, or links need --approved:
+#   yes | standing-rule (also pass --rule <name>) | no-approval-needed
 W="$CLAUDIA_HOME/work"
 ```
+
+### Doctor and half-built homes
+
+```bash
+python3 "$L" "${H[@]}" doctor
+python3 "$L" "${H[@]}" cleanup-half-built "$CLAUDIA_HOME"   # refuses if ledger has real rows
+```
+
+### Approvals on writes
+
+Pass `--approved` on every write that changes people, promises, or links. Use `yes` only when the owner said yes in chat to this exact change. Health snapshots use `--approved no-approval-needed`. Merges and restores use the flag value you pass (owner-asked restore is `yes`).
+
+### Snapshots and links
+
+```bash
+python3 "$L" "${H[@]}" snapshot --label pre-import
+python3 "$L" "${H[@]}" propose-links          # writes $W/link-candidates.json only
+python3 "$L" "${H[@]}" --approved yes apply-links --file "$W/link-candidates.json" --pick all
+```
+
+Scanner candidates may include `needs_due: true` and an empty `due` when everyday wording has no date. Ask the owner for a date before recording an open promise (unless they turned on `dateless_promises` in owner.json; default is off).
 
 ---
 
@@ -146,11 +170,11 @@ python3 "$S" --input "$W/source-items.jsonl" \
 5. Judge each candidate. On accept:
 
 ```bash
-python3 "$L" "${H[@]}" add commitment --direction "I owe" --person-id P-0001 \
-  --what "Send updated kit" --due 2026-10-25 --source-link "mail:…"
+python3 "$L" "${H[@]}" --approved yes add commitment --direction "I owe" --person-id P-0001 \
+  --what "Send updated kit" --due 2026-10-25 --source-link "mail:example"
 ```
 
-Open promises always need a due date. Ask the owner once if it is missing.
+Open promises need a due date unless `dateless_promises` is on in owner.json (default off). If the scanner sets `needs_due`, ask the owner for a date once.
 
 6. Render and send the brief (pass real JSON; do not invent stand-in text):
 
@@ -246,7 +270,9 @@ python3 "$R" --home "$CLAUDIA_HOME" --template meditate --data "$W/meditate.json
 ```bash
 python3 "$L" "${H[@]}" check
 python3 "$L" "${H[@]}" backups
-python3 "$L" "${H[@]}" health snapshot
+python3 "$L" "${H[@]}" --approved no-approval-needed health snapshot
+python3 "$L" "${H[@]}" propose-links
+# Ask the grouped question once, then apply with --approved yes if the owner picks yes/pick.
 ```
 
 `health snapshot` writes one `reason=weekly` row per person into `health_history.csv`. Any other write that changes a person's health also appends a `reason=changed` row.
@@ -254,7 +280,7 @@ python3 "$L" "${H[@]}" health snapshot
 4. Merges only after a yes:
 
 ```bash
-python3 "$L" "${H[@]}" merge --kept P-0001 --merged P-0002 --evidence "same email"
+python3 "$L" "${H[@]}" --approved yes merge --kept P-0001 --merged P-0002 --evidence "same email example"
 ```
 
 5. Publish the Weekly review Page edition. Refresh the Brain.
@@ -269,27 +295,31 @@ python3 "$R" --home "$CLAUDIA_HOME" --template weekly_review --data "$W/weekly.j
 ## Everyday ledger commands
 
 ```bash
-python3 "$L" "${H[@]}" add person --name "Alex Rivera" --org-id O-0001
-python3 "$L" "${H[@]}" add org --name "Northwind Labs"
-python3 "$L" "${H[@]}" add project --name "Launch kit" --org-id O-0001
-python3 "$L" "${H[@]}" add commitment --direction "I owe" --person-id P-0001 \
+python3 "$L" "${H[@]}" --approved yes add person --name "Alex Rivera" --org-id O-0001
+python3 "$L" "${H[@]}" --approved yes add org --name "Northwind Labs"
+python3 "$L" "${H[@]}" --approved yes add project --name "Launch kit" --org-id O-0001
+python3 "$L" "${H[@]}" --approved yes add commitment --direction "I owe" --person-id P-0001 \
   --what "Send deck" --due 2026-10-25 --source-link chat:2026-10-24
-python3 "$L" "${H[@]}" add interaction --person-id P-0001 --summary "Catch-up" --channel email --actor owner
-python3 "$L" "${H[@]}" add link --from-id ME --to-id O-0001 --type works_at --basis stated
+python3 "$L" "${H[@]}" --approved yes add interaction --person-id P-0001 --summary "Catch-up" --channel email --actor owner
+python3 "$L" "${H[@]}" --approved yes add link --from-id ME --to-id O-0001 --type works_at --basis stated
 
-python3 "$L" "${H[@]}" update person --id P-0001 --role Partner
-python3 "$L" "${H[@]}" update commitment --id C-0001 --due 2026-10-28 --what "Send deck v2"
-python3 "$L" "${H[@]}" close --id C-0001 --status done
+python3 "$L" "${H[@]}" --approved yes update person --id P-0001 --role Partner
+python3 "$L" "${H[@]}" --approved yes update commitment --id C-0001 --due 2026-10-28 --what "Send deck v2"
+python3 "$L" "${H[@]}" --approved yes close --id C-0001 --status done
 
-python3 "$L" "${H[@]}" merge --kept P-0001 --merged P-0002 --evidence "same email"
-python3 "$L" "${H[@]}" forget --id P-0003 --yes
+python3 "$L" "${H[@]}" --approved yes merge --kept P-0001 --merged P-0002 --evidence "same email example"
+python3 "$L" "${H[@]}" --approved yes forget --id P-0003 --yes
 
-python3 "$L" "${H[@]}" health snapshot
+python3 "$L" "${H[@]}" --approved no-approval-needed health snapshot
+python3 "$L" "${H[@]}" snapshot --label pre-import
 python3 "$L" "${H[@]}" backups
-python3 "$L" "${H[@]}" restore 20261024T120000Z
+python3 "$L" "${H[@]}" --approved yes restore 20261024T120000Z
+python3 "$L" "${H[@]}" doctor
+python3 "$L" "${H[@]}" propose-links
+python3 "$L" "${H[@]}" --approved yes apply-links --file "$W/link-candidates.json" --pick all
 ```
 
-Every write snapshots to `$CLAUDIA_HOME/ledger/backups/` first (last 30 by default; `--backup-keep` or `CLAUDIA_BACKUP_KEEP`). `restore` takes a safety snapshot of the current state first.
+Every write snapshots to `$CLAUDIA_HOME/ledger/backups/` first. Retention keeps the first snapshot, every named snapshot, newest of each of the last 14 days, newest of each of the last 8 weeks, plus the last 30 recent ones (`--backup-keep` or `CLAUDIA_BACKUP_KEEP`). `restore` takes a safety snapshot of the current state first.
 
 `update commitment` changes due, what, person, or source link. Use `close` for status changes (done / dropped / renegotiated).
 

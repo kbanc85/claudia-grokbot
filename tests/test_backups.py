@@ -17,6 +17,12 @@ BOT = "backup-bot"
 
 
 def run_home(home: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    sys.path.insert(0, str(ROOT / "tests"))
+    from _cli import with_approved
+
+    approved = "yes"
+    if args and args[0] == "health":
+        approved = "no-approval-needed"
     cmd = [
         sys.executable,
         str(SCRIPT),
@@ -24,7 +30,7 @@ def run_home(home: Path, *args: str, check: bool = True) -> subprocess.Completed
         str(home),
         "--bot-id",
         BOT,
-        *args,
+        *with_approved(args, approved=approved),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if check and proc.returncode != 0:
@@ -66,6 +72,8 @@ class BackupRestoreTests(unittest.TestCase):
         self.assertGreaterEqual(len(stamps2), 2)
 
     def test_backup_keep_env(self) -> None:
+        # Retention always protects first/daily/named; --backup-keep caps the
+        # "recent" set. Same-day writes should stay small.
         run_home(self.home, "--backup-keep", "2", "init")
         for i in range(4):
             run_home(
@@ -79,7 +87,8 @@ class BackupRestoreTests(unittest.TestCase):
                 "--force-new",
             )
         stamps = [p for p in (self.ledger / "backups").iterdir() if p.is_dir()]
-        self.assertLessEqual(len(stamps), 2)
+        # first + daily + last 2 recent overlap; should not grow without bound.
+        self.assertLessEqual(len(stamps), 6)
 
 
 if __name__ == "__main__":

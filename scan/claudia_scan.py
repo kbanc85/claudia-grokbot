@@ -187,6 +187,9 @@ DUE_FRAG = (
 # Conservative promise patterns
 # ---------------------------------------------------------------------------
 
+# Optional trailing due (everyday wording may omit a date).
+OPTIONAL_DUE = r"(?:\s+" + DUE_FRAG + r")?"
+
 # Explicit first-person commitments with a concrete deliverable cue.
 I_OWE_PATTERNS = [
     re.compile(
@@ -208,7 +211,54 @@ I_OWE_PATTERNS = [
         r"\bI promise to\s+(?P<body>.+?)\s+" + DUE_FRAG,
         re.IGNORECASE,
     ),
+    # Everyday wording (due optional; missing due => needs_due).
+    re.compile(
+        r"\blet me\s+"
+        r"(?P<verb>send|share|set up|set some time up|check|look into|"
+        r"get back to you|loop in|intro|connect)"
+        r"(?:\s+(?P<body>[^.\n!?]*))?"
+        + OPTIONAL_DUE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bI(?:'m| am) going to\s+(?P<body>.+?)"
+        + OPTIONAL_DUE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bI(?:'ll| will)\s+get back to you"
+        r"(?:\s+(?P<body>[^.\n!?]*))?"
+        + OPTIONAL_DUE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bI(?:'ll| will)\s+"
+        r"(?P<verb>loop in|intro|connect you with|connect)"
+        r"\s+(?P<body>.+?)"
+        + OPTIONAL_DUE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:I will be attending|I(?:'ll| will) be there|count me in)\b"
+        r"(?P<body>[^.\n!?]*)"
+        + OPTIONAL_DUE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bI can\s+(?P<verb>send|share)\s+(?P<body>.+?)\s+" + DUE_FRAG,
+        re.IGNORECASE,
+    ),
 ]
+
+# Patterns that use the everyday list (for --explain labels).
+EVERYDAY_RULE_NAMES = {
+    3: "let me (send|share|set up|...)",
+    4: "I'm going to / I am going to",
+    5: "I'll get back to you",
+    6: "I'll loop in / intro / connect",
+    7: "attendance / count me in",
+    8: "I can (send|share) ... by <date>",
+}
 
 # Asks / please / need-you-to with a required due signal.
 OWED_TO_ME_PATTERNS = [
@@ -253,8 +303,12 @@ REJECT = [
     (re.compile(r"\bI already (?:sent|shared|delivered|emailed|finished)\b", re.I), "already done"),
     (re.compile(r"\bI (?:sent|shared|delivered|emailed)\b.+\b(yesterday|earlier|last week)\b", re.I), "already done"),
     (re.compile(r"\bjust making sure\b", re.I), "status question"),
-    # Pure status questions only. "Can/could you … by Friday?" is an ask, not rejected here.
+    # Pure status questions only. "Can/could you ... by Friday?" is an ask, not rejected here.
     (re.compile(r"^\s*(?:did|have|has|was|were|is|are)\b.+\?\s*$", re.I), "question only"),
+    # Everyday soft phrases that are not promises.
+    (re.compile(r"\blet me know\b", re.I), "let me know (not a promise)"),
+    (re.compile(r"\blet me think\b", re.I), "let me think (not a promise)"),
+    (re.compile(r"\blet me be clear\b", re.I), "let me be clear (not a promise)"),
 ]
 
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
@@ -273,6 +327,8 @@ class Candidate:
     direction: str
     confidence: float
     reasons: list[str] = field(default_factory=list)
+    needs_due: bool = False
+    confidence_label: str = ""
 
 
 def normalize_name(s: str) -> str:
@@ -322,11 +378,50 @@ def reject_sentence(sentence: str) -> str | None:
     return None
 
 
+def explain_sentence(
+    sentence: str,
+    *,
+    from_is_owner: bool,
+    to_is_owner: bool,
+    owner_names: Sequence[str],
+    anchor: date,
+) -> str:
+    """One-line --explain note for a sentence."""
+    why = reject_sentence(sentence)
+    if why:
+        return f"skip: {why}"
+    for idx, pat in enumerate(I_OWE_PATTERNS):
+        m = pat.search(sentence)
+        if not m:
+            continue
+        rule = EVERYDAY_RULE_NAMES.get(idx, f"I_OWE_PATTERNS[{idx}]")
+        due_chunk = (m.groupdict().get("due") or "") + " " + sentence
+        due, _ = resolve_due(anchor, due_chunk)
+        if not from_is_owner and not to_is_owner:
+            return f"skip: matched {rule} but neither from nor to is owner"
+        if due is None:
+            return f"match: {rule} (needs_due)"
+        return f"match: {rule} (due {due})"
+    for idx, pat in enumerate(OWED_TO_ME_PATTERNS):
+        m = pat.search(sentence)
+        if not m:
+            continue
+        if not to_is_owner and not from_is_owner:
+            return f"skip: matched ask pattern[{idx}] but owner not involved"
+        due_chunk = (m.groupdict().get("due") or "") + " " + sentence
+        due, _ = resolve_due(anchor, due_chunk)
+        if due is None:
+            return f"skip: ask pattern[{idx}] without due date"
+        return f"match: ask pattern[{idx}] (due {due})"
+    return "skip: no promise pattern matched"
+
+
 def scan_item(
     item: MappingLike,
     *,
     owner_names: Sequence[str],
     owner_emails: Sequence[str],
+    explain: bool = False,
 ) -> list[Candidate]:
     text = str(item.get("text") or "")
     subject = str(item.get("subject") or "")
@@ -345,28 +440,62 @@ def scan_item(
     sentences = [s.strip() for s in SENTENCE_SPLIT.split(blob) if s.strip()]
 
     for sentence in sentences:
+        if explain:
+            note = explain_sentence(
+                sentence,
+                from_is_owner=from_is_owner,
+                to_is_owner=to_is_owner,
+                owner_names=owner_names,
+                anchor=anchor,
+            )
+            print(f"EXPLAIN [{item_id}] {sentence!r} -> {note}", file=sys.stderr)
+
         why = reject_sentence(sentence)
         if why:
             continue
 
-        # I owe patterns
-        for pat in I_OWE_PATTERNS:
+        # I owe / everyday patterns
+        for idx, pat in enumerate(I_OWE_PATTERNS):
             m = pat.search(sentence)
             if not m:
                 continue
             gd = m.groupdict()
             verb = gd.get("verb") or "do"
             body = (gd.get("body") or "") + " " + (gd.get("body2") or "")
+            attendance = bool(
+                re.search(
+                    r"\b(?:I will be attending|I(?:'ll| will) be there|count me in)\b",
+                    sentence,
+                    re.I,
+                )
+            )
+            if attendance:
+                verb = "attend"
+                body = body or "the event"
             due_chunk = (gd.get("due") or "") + " " + sentence
             due, due_reason = resolve_due(anchor, due_chunk)
-            if due is None:
+            needs_due = due is None
+            # Legacy dated patterns (idx 0-2) still require a due date.
+            if needs_due and idx < 3:
                 continue
             what = clean_what(verb, body)
-            if len(what.split()) < 2:
+            # Allow short attendance / get-back phrases.
+            if len(what.split()) < 2 and not attendance and "get back" not in sentence.lower():
+                if "get back to you" in sentence.lower():
+                    what = "get back to you"
+                else:
+                    continue
+            if len(what.split()) < 1:
                 continue
-            reasons = ["explicit first-person commitment", "due date signal"]
+            reasons = ["explicit first-person commitment"]
+            if needs_due:
+                reasons.append("needs due date from owner")
+            else:
+                reasons.append("due date signal")
             if due_reason:
                 reasons.append(due_reason)
+            if attendance:
+                reasons.append("attendance")
             if from_is_owner:
                 who_owes = owner_names[0] if owner_names else frm or "owner"
                 owed_to = to.split(",")[0].strip() if to else "them"
@@ -379,6 +508,8 @@ def scan_item(
                 reasons.append("counterparty promised owner")
             else:
                 continue
+            conf = 0.55 if needs_due else 0.9
+            label = "low" if needs_due else ""
             out.append(
                 Candidate(
                     item_id=item_id,
@@ -388,10 +519,12 @@ def scan_item(
                     who_owes=who_owes,
                     owed_to=owed_to,
                     what=what,
-                    due=due,
+                    due=due if due is not None else "",
                     direction=direction,
-                    confidence=0.9,
+                    confidence=conf,
                     reasons=reasons,
+                    needs_due=needs_due,
+                    confidence_label=label,
                 )
             )
             break
@@ -417,13 +550,13 @@ def scan_item(
                 if due_reason:
                     reasons.append(due_reason)
                 if from_is_owner:
-                    # Owner asking counterparty → owed to me
+                    # Owner asking counterparty -> owed to me
                     direction = "owed to me"
                     who_owes = to.split(",")[0].strip() if to else "them"
                     owed_to = owner_names[0] if owner_names else "owner"
                     reasons.append("owner asked counterparty")
                 else:
-                    # Counterparty asking owner → I owe
+                    # Counterparty asking owner -> I owe
                     direction = "I owe"
                     who_owes = owner_names[0] if owner_names else "owner"
                     owed_to = frm or "them"
@@ -512,12 +645,17 @@ output fields: item_id, source, link, quote, who_owes, owed_to, what, due,
         "--min-confidence",
         type=float,
         default=0.7,
-        help="Drop candidates below this confidence (default 0.7)",
+        help="Drop candidates below this confidence (default 0.7; needs_due always kept)",
     )
     p.add_argument(
         "--jsonl",
         action="store_true",
         help="Emit JSONL instead of a JSON array",
+    )
+    p.add_argument(
+        "--explain",
+        action="store_true",
+        help="Print per-sentence match/skip reasons on stderr",
     )
     p.add_argument("-o", "--output", help="Write output to this path (default stdout)")
     return p
@@ -530,10 +668,19 @@ def main(argv: list[str] | None = None) -> int:
     items = load_jsonl(Path(args.input))
     results: list[dict[str, Any]] = []
     for item in items:
-        for cand in scan_item(item, owner_names=owner_names, owner_emails=owner_emails):
-            if cand.confidence < args.min_confidence:
+        for cand in scan_item(
+            item,
+            owner_names=owner_names,
+            owner_emails=owner_emails,
+            explain=bool(args.explain),
+        ):
+            # needs_due candidates stay visible so the bot can ask for a date.
+            if cand.confidence < args.min_confidence and not cand.needs_due:
                 continue
-            results.append(asdict(cand))
+            payload = asdict(cand)
+            if not payload.get("confidence_label"):
+                payload.pop("confidence_label", None)
+            results.append(payload)
     if args.jsonl:
         text = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in results)
     else:

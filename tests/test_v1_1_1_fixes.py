@@ -29,11 +29,18 @@ def run(
     bot_id: str | None = BOT,
     check: bool = True,
     env: dict[str, str] | None = None,
+    approved: str | None = "yes",
 ) -> subprocess.CompletedProcess[str]:
+    from _cli import with_approved
+
     cmd = [sys.executable, str(LEDGER), "--home", str(home)]
     if bot_id is not None:
         cmd.extend(["--bot-id", bot_id])
-    cmd.extend(args)
+    # health snapshot uses no-approval-needed unless caller overrides.
+    use_approved = approved
+    if use_approved == "yes" and args and args[0] == "health":
+        use_approved = "no-approval-needed"
+    cmd.extend(with_approved(args, approved=use_approved))
     full_env = os.environ.copy()
     full_env.pop("CLAUDIA_HOME", None)
     full_env.pop("CLAUDIA_BOT_ID", None)
@@ -471,11 +478,11 @@ class WelcomeTourContentTests(unittest.TestCase):
 
 
 class VersionBumpTests(unittest.TestCase):
-    def test_version_is_exactly_1_1_2(self) -> None:
+    def test_version_is_exactly_1_1_3(self) -> None:
         raw = (ROOT / "VERSION").read_text(encoding="utf-8")
-        self.assertEqual(raw.strip(), "1.1.2")
+        self.assertEqual(raw.strip(), "1.1.3")
         # Exactly one content line (optional trailing newline only).
-        self.assertEqual([ln for ln in raw.splitlines() if ln.strip()], ["1.1.2"])
+        self.assertEqual([ln for ln in raw.splitlines() if ln.strip()], ["1.1.3"])
 
 
 if __name__ == "__main__":

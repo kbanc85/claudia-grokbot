@@ -132,6 +132,7 @@ class NoDashTests(unittest.TestCase):
             ROOT / "setup",
             ROOT / "update" / "README.md",
             ROOT / "brain" / "README.md",
+            ROOT / "brain" / "claudia-brain.canvas.tsx",
             ROOT / "scan" / "README.md",
         ]
         bad: list[str] = []
@@ -317,7 +318,89 @@ class CoverageBrainTests(unittest.TestCase):
         )
         text = out.read_text(encoding="utf-8")
         self.assertIn("scanned chat", text)
-        self.assertIn("Last updated", BRAIN.read_text(encoding="utf-8"))
+        self.assertIn("const UPDATED", text)
+        self.assertIn("const COVERAGE", text)
+        self.assertIn("Last updated", text)
+
+    def test_coverage_omitted_when_unset(self) -> None:
+        exp = run(self.home, "export-brain", "--generated", "2026-10-24")
+        obj = json.loads(exp.stdout)
+        self.assertNotIn("coverage", obj)
+
+    def test_export_read_only_and_no_contact_days(self) -> None:
+        people_path = self.home / "ledger" / "people.csv"
+        before = people_path.read_text(encoding="utf-8")
+        health_before = (self.home / "ledger" / "health_history.csv").read_text(
+            encoding="utf-8"
+        )
+        exp = run(self.home, "export-brain", "--generated", "2026-10-24")
+        obj = json.loads(exp.stdout)
+        self.assertEqual(people_path.read_text(encoding="utf-8"), before)
+        self.assertEqual(
+            (self.home / "ledger" / "health_history.csv").read_text(encoding="utf-8"),
+            health_before,
+        )
+        # Person added without last_contact -> days_since -1
+        self.assertEqual(obj["people"][0]["days_since"], -1)
+
+    def test_build_brain_keeps_code_after_end_marker(self) -> None:
+        out = self.tmp / "brain-ready.canvas.tsx"
+        run(
+            self.home,
+            "build-brain",
+            "-o",
+            str(out),
+            "--template",
+            str(BRAIN),
+            "--generated",
+            "2026-10-24",
+            "--example",
+        )
+        text = out.read_text(encoding="utf-8")
+        end = text.find("/* LEDGER-DATA-END */")
+        self.assertGreater(end, 0)
+        after = text[end + len("/* LEDGER-DATA-END */") :]
+        self.assertIn("const UPDATED", after)
+        self.assertIn("const COVERAGE", after)
+        self.assertIn("export default function", after)
+        # Output must still parse as a balanced TSX-ish module for the markers.
+        self.assertIn("/* LEDGER-DATA-START */", text)
+        self.assertIn('"generated": "2026-10-24"', text)
+        # Extract JSON object after "const LEDGER: Ledger = " and parse it.
+        start = text.find("const LEDGER: Ledger = ")
+        self.assertGreater(start, 0)
+        json_start = text.find("{", start)
+        json_end = text.find(";\n/* LEDGER-DATA-END */", json_start)
+        self.assertGreater(json_end, json_start)
+        payload = json.loads(text[json_start:json_end])
+        self.assertEqual(payload["generated"], "2026-10-24")
+        self.assertTrue(payload["example"])
+        self.assertIn("people", payload)
+
+    def test_claudia_and_bot_owe_directions(self) -> None:
+        for direction in ("Claudia owes", "bot owes"):
+            proc = run(
+                self.home,
+                "add",
+                "commitment",
+                "--direction",
+                direction,
+                "--person-id",
+                "P-0001",
+                "--what",
+                f"Draft for {direction}",
+                "--due",
+                "2026-10-30",
+                "--source-link",
+                "test",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        chk = run(self.home, "check")
+        self.assertEqual(chk.returncode, 0, chk.stdout + chk.stderr)
+        rows = read_csv(self.home / "ledger" / "commitments.csv")
+        dirs = {r["direction"] for r in rows}
+        self.assertIn("Claudia owes", dirs)
+        self.assertIn("bot owes", dirs)
 
 
 class ForgetUnknownTests(unittest.TestCase):
@@ -388,11 +471,11 @@ class WelcomeTourContentTests(unittest.TestCase):
 
 
 class VersionBumpTests(unittest.TestCase):
-    def test_version_is_exactly_1_1_1(self) -> None:
+    def test_version_is_exactly_1_1_2(self) -> None:
         raw = (ROOT / "VERSION").read_text(encoding="utf-8")
-        self.assertEqual(raw.strip(), "1.1.1")
+        self.assertEqual(raw.strip(), "1.1.2")
         # Exactly one content line (optional trailing newline only).
-        self.assertEqual([ln for ln in raw.splitlines() if ln.strip()], ["1.1.1"])
+        self.assertEqual([ln for ln in raw.splitlines() if ln.strip()], ["1.1.2"])
 
 
 if __name__ == "__main__":

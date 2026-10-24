@@ -2,81 +2,805 @@ import { Button, Input, Metrics, Page, Select, Toggle, Status, Text, useEffect, 
 import type { PointerEvent, ReactNode } from "grok/canvas";
 
 // Made with Grok Bot.
-
 // Claudia rebuilds this Page in place: she replaces only the block between the LEDGER-DATA
 // markers with JSON exported from the Claudia Ledger tabs (People, Orgs, Projects, Links,
 // Commitments, Interactions) plus owner: { name } (the hub), then overwrites this same Page by
 // its id. Allowed fields only: no email, phone, notes_pointer, or rows tagged sensitive.
 /* LEDGER-DATA-START */
 const LEDGER: Ledger = {
-  "generated": "2026-10-24",
+  "generated": "2026-10-23",
   "example": true,
-  "coverage": "scanned email, calendar, chat; through 2026-10-24",
   "owner": {
     "name": "You"
   },
   "people": [
     {
       "id": "P-0001",
-      "name": "Alex Rivera",
+      "name": "Sarah K.",
       "org_id": "O-0001",
-      "role": "Partner",
-      "network": "work",
-      "relationship": "collaborator",
-      "cadence_days": 14,
-      "last_contact": "2026-10-10",
-      "days_since": 14,
+      "role": "Head of Ops",
+      "network": "professional",
+      "relationship": "client",
+      "cadence_days": 7,
+      "last_contact": "2026-10-20",
+      "days_since": 3,
       "health": "active",
       "city": "Austin",
-      "how_met": "intro"
+      "how_met": "conference"
     },
     {
       "id": "P-0002",
-      "name": "Jordan Lee",
+      "name": "Sarah M.",
+      "org_id": "O-0006",
+      "role": "Partner",
+      "network": "professional",
+      "relationship": "advisor",
+      "cadence_days": 30,
+      "last_contact": "2026-09-12",
+      "days_since": 41,
+      "health": "cooling",
+      "city": "Denver",
+      "how_met": "intro by Leo B."
+    },
+    {
+      "id": "P-0003",
+      "name": "Leo B.",
+      "org_id": "O-0004",
+      "role": "Investor",
+      "network": "professional",
+      "relationship": "investor",
+      "cadence_days": 14,
+      "last_contact": "2026-10-14",
+      "days_since": 9,
+      "health": "active",
+      "city": "New York",
+      "how_met": "cold email"
+    },
+    {
+      "id": "P-0004",
+      "name": "Priya N.",
       "org_id": "O-0002",
-      "role": "Advisor",
+      "role": "CTO",
+      "network": "professional",
+      "relationship": "partner",
+      "cadence_days": 7,
+      "last_contact": "2026-10-05",
+      "days_since": 18,
+      "health": "cooling",
+      "city": "Remote",
+      "how_met": "former colleague"
+    },
+    {
+      "id": "P-0005",
+      "name": "Marcus T.",
+      "org_id": "O-0001",
+      "role": "CEO",
+      "network": "professional",
+      "relationship": "client",
+      "cadence_days": 7,
+      "last_contact": "2026-10-05",
+      "days_since": 18,
+      "health": "cooling",
+      "city": "Austin",
+      "how_met": "referral"
+    },
+    {
+      "id": "P-0006",
+      "name": "Dana W.",
+      "org_id": "O-0003",
+      "role": "Designer",
+      "network": "professional",
+      "relationship": "vendor",
+      "cadence_days": 14,
+      "last_contact": "2026-10-18",
+      "days_since": 5,
+      "health": "active",
+      "city": "Portland",
+      "how_met": "online community"
+    },
+    {
+      "id": "P-0007",
+      "name": "Omar F.",
+      "org_id": "O-0007",
+      "role": "Producer",
+      "network": "professional",
+      "relationship": "collaborator",
+      "cadence_days": 14,
+      "last_contact": "2026-10-21",
+      "days_since": 2,
+      "health": "active",
+      "city": "Chicago",
+      "how_met": "podcast guest"
+    },
+    {
+      "id": "P-0008",
+      "name": "Grace L.",
+      "org_id": "O-0005",
+      "role": "Program lead",
+      "network": "professional",
+      "relationship": "client",
+      "cadence_days": 30,
+      "last_contact": "2026-10-11",
+      "days_since": 12,
+      "health": "active",
+      "city": "Boston",
+      "how_met": "workshop"
+    },
+    {
+      "id": "P-0009",
+      "name": "Ivan P.",
+      "org_id": "O-0004",
+      "role": "Associate",
+      "network": "professional",
+      "relationship": "investor",
+      "cadence_days": 30,
+      "last_contact": "2026-08-09",
+      "days_since": 75,
+      "health": "inactive",
+      "city": "New York",
+      "how_met": "Leo B."
+    },
+    {
+      "id": "P-0010",
+      "name": "Mia C.",
+      "org_id": null,
+      "role": "Friend",
+      "network": "personal",
+      "relationship": "friend",
+      "cadence_days": 14,
+      "last_contact": "2026-10-13",
+      "days_since": 10,
+      "health": "active",
+      "city": "Austin",
+      "how_met": "college"
+    },
+    {
+      "id": "P-0011",
+      "name": "Noah R.",
+      "org_id": null,
+      "role": "Neighbor",
+      "network": "personal",
+      "relationship": "friend",
+      "cadence_days": 30,
+      "last_contact": "2026-09-01",
+      "days_since": 52,
+      "health": "cooling",
+      "city": "Austin",
+      "how_met": "neighborhood"
+    },
+    {
+      "id": "P-0012",
+      "name": "Ella S.",
+      "org_id": "O-0008",
+      "role": "Community manager",
+      "network": "professional",
+      "relationship": "partner",
+      "cadence_days": 14,
+      "last_contact": "2026-10-17",
+      "days_since": 6,
+      "health": "active",
+      "city": "Austin",
+      "how_met": "meetup"
+    },
+    {
+      "id": "P-0013",
+      "name": "Felix H.",
+      "org_id": "O-0002",
+      "role": "Engineer",
+      "network": "professional",
+      "relationship": "partner",
+      "cadence_days": 30,
+      "last_contact": "2026-09-20",
+      "days_since": 33,
+      "health": "cooling",
+      "city": "Remote",
+      "how_met": "Priya N."
+    },
+    {
+      "id": "P-0014",
+      "name": "Hana Y.",
+      "org_id": "O-0007",
+      "role": "Host",
+      "network": "professional",
+      "relationship": "collaborator",
+      "cadence_days": 7,
+      "last_contact": "2026-10-19",
+      "days_since": 4,
+      "health": "active",
+      "city": "Chicago",
+      "how_met": "podcast"
+    },
+    {
+      "id": "P-0015",
+      "name": "Jonas E.",
+      "org_id": "O-0006",
+      "role": "Analyst",
+      "network": "professional",
+      "relationship": "advisor",
+      "cadence_days": 60,
+      "last_contact": "2026-07-20",
+      "days_since": 95,
+      "health": "inactive",
+      "city": "Denver",
+      "how_met": "Sarah M."
+    },
+    {
+      "id": "P-0016",
+      "name": "Kira D.",
+      "org_id": null,
+      "role": "Mentor",
       "network": "personal",
       "relationship": "mentor",
       "cadence_days": 30,
-      "last_contact": "2026-09-01",
-      "days_since": 53,
+      "last_contact": "2026-10-01",
+      "days_since": 22,
+      "health": "active",
+      "city": "Seattle",
+      "how_met": "old job"
+    },
+    {
+      "id": "P-0017",
+      "name": "Luis G.",
+      "org_id": "O-0003",
+      "role": "Developer",
+      "network": "professional",
+      "relationship": "vendor",
+      "cadence_days": 14,
+      "last_contact": "2026-10-08",
+      "days_since": 15,
       "health": "cooling",
-      "city": "NYC",
+      "city": "Portland",
+      "how_met": "Dana W."
+    },
+    {
+      "id": "P-0018",
+      "name": "Nina A.",
+      "org_id": "O-0005",
+      "role": "Teacher",
+      "network": "professional",
+      "relationship": "client",
+      "cadence_days": 30,
+      "last_contact": "2026-10-15",
+      "days_since": 8,
+      "health": "active",
+      "city": "Boston",
+      "how_met": "Grace L."
+    },
+    {
+      "id": "P-0019",
+      "name": "Owen J.",
+      "org_id": null,
+      "role": "Brother-in-law",
+      "network": "personal",
+      "relationship": "family",
+      "cadence_days": 30,
+      "last_contact": "2026-09-13",
+      "days_since": 40,
+      "health": "cooling",
+      "city": "Atlanta",
+      "how_met": "family"
+    },
+    {
+      "id": "P-0020",
+      "name": "Pia Z.",
+      "org_id": "O-0008",
+      "role": "Founder",
+      "network": "professional",
+      "relationship": "peer",
+      "cadence_days": 30,
+      "last_contact": "2026-08-20",
+      "days_since": 64,
+      "health": "inactive",
+      "city": "Austin",
+      "how_met": "meetup"
+    },
+    {
+      "id": "P-0021",
+      "name": "Raj V.",
+      "org_id": "O-0001",
+      "role": "Finance lead",
+      "network": "professional",
+      "relationship": "client",
+      "cadence_days": 14,
+      "last_contact": "2026-09-27",
+      "days_since": 26,
+      "health": "cooling",
+      "city": "Austin",
+      "how_met": "Marcus T."
+    },
+    {
+      "id": "P-0022",
+      "name": "Sofia B.",
+      "org_id": null,
+      "role": "Friend",
+      "network": "personal",
+      "relationship": "friend",
+      "cadence_days": 14,
+      "last_contact": "2026-10-20",
+      "days_since": 3,
+      "health": "active",
+      "city": "Austin",
+      "how_met": "running club"
+    },
+    {
+      "id": "P-0023",
+      "name": "Theo M.",
+      "org_id": "O-0004",
+      "role": "Partner",
+      "network": "professional",
+      "relationship": "investor",
+      "cadence_days": 30,
+      "last_contact": "2026-10-10",
+      "days_since": 13,
+      "health": "active",
+      "city": "New York",
+      "how_met": "Leo B."
+    },
+    {
+      "id": "P-0024",
+      "name": "Uma K.",
+      "org_id": null,
+      "role": "Coach",
+      "network": "personal",
+      "relationship": "coach",
+      "cadence_days": 14,
+      "last_contact": "2026-10-07",
+      "days_since": 16,
+      "health": "cooling",
+      "city": "Remote",
+      "how_met": "referral"
+    },
+    {
+      "id": "P-0025",
+      "name": "Victor Q.",
+      "org_id": "O-0006",
+      "role": "Consultant",
+      "network": "professional",
+      "relationship": "peer",
+      "cadence_days": 60,
+      "last_contact": "2026-06-25",
+      "days_since": 120,
+      "health": "inactive",
+      "city": "Denver",
       "how_met": "conference"
     }
   ],
   "orgs": [
     {
       "id": "O-0001",
-      "name": "Northwind Labs"
+      "name": "Acme Co"
     },
     {
       "id": "O-0002",
-      "name": "Harbor Advisory"
+      "name": "Northwind Labs"
+    },
+    {
+      "id": "O-0003",
+      "name": "Bluebird Studio"
+    },
+    {
+      "id": "O-0004",
+      "name": "Cedar Capital"
+    },
+    {
+      "id": "O-0005",
+      "name": "Riverbend School"
+    },
+    {
+      "id": "O-0006",
+      "name": "Summit Partners"
+    },
+    {
+      "id": "O-0007",
+      "name": "Lumen Media"
+    },
+    {
+      "id": "O-0008",
+      "name": "Harbor Coworking"
     }
   ],
   "projects": [
     {
       "id": "J-0001",
-      "name": "Launch kit",
-      "org_id": "O-0001",
+      "name": "Website relaunch",
+      "org_id": "O-0003",
       "status": "active"
+    },
+    {
+      "id": "J-0002",
+      "name": "Seed round",
+      "org_id": "O-0004",
+      "status": "active"
+    },
+    {
+      "id": "J-0003",
+      "name": "Podcast season 2",
+      "org_id": "O-0007",
+      "status": "active"
+    },
+    {
+      "id": "J-0004",
+      "name": "Community meetup",
+      "org_id": "O-0008",
+      "status": "planning"
+    },
+    {
+      "id": "J-0005",
+      "name": "Workshop series",
+      "org_id": "O-0005",
+      "status": "active"
+    },
+    {
+      "id": "J-0006",
+      "name": "Partner pilot",
+      "org_id": "O-0002",
+      "status": "paused"
     }
   ],
   "links": [
     {
-      "from_id": "ME",
+      "from_id": "P-0001",
       "to_id": "O-0001",
       "type": "works_at",
       "basis": "stated",
       "source": "example"
     },
     {
-      "from_id": "P-0001",
-      "to_id": "J-0001",
-      "type": "owns",
+      "from_id": "P-0002",
+      "to_id": "O-0006",
+      "type": "works_at",
       "basis": "stated",
       "source": "example"
+    },
+    {
+      "from_id": "P-0003",
+      "to_id": "O-0004",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0004",
+      "to_id": "O-0002",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0005",
+      "to_id": "O-0001",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0006",
+      "to_id": "O-0003",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0007",
+      "to_id": "O-0007",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0008",
+      "to_id": "O-0005",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0009",
+      "to_id": "O-0004",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0012",
+      "to_id": "O-0008",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0013",
+      "to_id": "O-0002",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0014",
+      "to_id": "O-0007",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0015",
+      "to_id": "O-0006",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0017",
+      "to_id": "O-0003",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0018",
+      "to_id": "O-0005",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0020",
+      "to_id": "O-0008",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0021",
+      "to_id": "O-0001",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0023",
+      "to_id": "O-0004",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0025",
+      "to_id": "O-0006",
+      "type": "works_at",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0002",
+      "to_id": "P-0003",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0009",
+      "to_id": "P-0003",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0013",
+      "to_id": "P-0004",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0015",
+      "to_id": "P-0002",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0017",
+      "to_id": "P-0006",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0018",
+      "to_id": "P-0008",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0021",
+      "to_id": "P-0005",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0023",
+      "to_id": "P-0003",
+      "type": "introduced_by",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "J-0001",
+      "to_id": "O-0003",
+      "type": "project_of",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "J-0002",
+      "to_id": "O-0004",
+      "type": "project_of",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "J-0003",
+      "to_id": "O-0007",
+      "type": "project_of",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "J-0004",
+      "to_id": "O-0008",
+      "type": "project_of",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "J-0005",
+      "to_id": "O-0005",
+      "type": "project_of",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "J-0006",
+      "to_id": "O-0002",
+      "type": "project_of",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0006",
+      "to_id": "J-0001",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0017",
+      "to_id": "J-0001",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0001",
+      "to_id": "J-0001",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0003",
+      "to_id": "J-0002",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0023",
+      "to_id": "J-0002",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0009",
+      "to_id": "J-0002",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0002",
+      "to_id": "J-0002",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0007",
+      "to_id": "J-0003",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0014",
+      "to_id": "J-0003",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0012",
+      "to_id": "J-0004",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0020",
+      "to_id": "J-0004",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0022",
+      "to_id": "J-0004",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0008",
+      "to_id": "J-0005",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0018",
+      "to_id": "J-0005",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0004",
+      "to_id": "J-0006",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0013",
+      "to_id": "J-0006",
+      "type": "works_on",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0005",
+      "to_id": "P-0003",
+      "type": "could_meet",
+      "basis": "inferred",
+      "source": "both mention fundraising"
+    },
+    {
+      "from_id": "P-0010",
+      "to_id": "P-0022",
+      "type": "friend",
+      "basis": "stated",
+      "source": "example"
+    },
+    {
+      "from_id": "P-0016",
+      "to_id": "P-0004",
+      "type": "works_with",
+      "basis": "inferred",
+      "source": "same past employer"
     }
   ],
   "commitments": [
@@ -84,34 +808,686 @@ const LEDGER: Ledger = {
       "id": "C-0001",
       "direction": "I owe",
       "person_id": "P-0001",
-      "what": "Send launch draft",
-      "due": "2026-10-25",
+      "what": "Send updated proposal",
+      "due": "2026-10-21",
       "status": "open",
       "source_link": "example"
     },
     {
       "id": "C-0002",
       "direction": "owed to me",
-      "person_id": "P-0002",
-      "what": "Intro to Harbor board",
+      "person_id": "P-0005",
+      "what": "Signed SOW",
+      "due": "2026-10-26",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0003",
+      "direction": "I owe",
+      "person_id": "P-0003",
+      "what": "Q3 metrics deck",
+      "due": "2026-10-24",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0004",
+      "direction": "Claudia owes",
+      "person_id": "P-0003",
+      "what": "Draft follow-up for review",
+      "due": "2026-10-23",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0005",
+      "direction": "I owe",
+      "person_id": "P-0004",
+      "what": "Intro to Kira D.",
+      "due": "2026-10-28",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0006",
+      "direction": "owed to me",
+      "person_id": "P-0006",
+      "what": "Homepage mockups",
+      "due": "2026-10-25",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0007",
+      "direction": "bot owes",
+      "person_id": "P-0007",
+      "what": "Episode show notes (Writer bot)",
+      "due": "2026-10-24",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0008",
+      "direction": "I owe",
+      "person_id": "P-0008",
+      "what": "Workshop outline",
+      "due": "2026-10-17",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0009",
+      "direction": "owed to me",
+      "person_id": "P-0012",
+      "what": "Venue options",
+      "due": "2026-10-27",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0010",
+      "direction": "I owe",
+      "person_id": "P-0010",
+      "what": "Return the camera",
+      "due": "2026-10-30",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0011",
+      "direction": "I owe",
+      "person_id": "P-0023",
+      "what": "Reference list",
+      "due": "2026-10-22",
+      "status": "done",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0012",
+      "direction": "owed to me",
+      "person_id": "P-0021",
+      "what": "Invoice approval",
       "due": "2026-10-20",
       "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0013",
+      "direction": "I owe",
+      "person_id": "P-0014",
+      "what": "Guest list",
+      "due": "2026-11-02",
+      "status": "open",
+      "source_link": "example"
+    },
+    {
+      "id": "C-0014",
+      "direction": "I owe",
+      "person_id": "P-0018",
+      "what": "Feedback on syllabus",
+      "due": "2026-10-25",
+      "status": "renegotiated",
       "source_link": "example"
     }
   ],
   "interactions": [
     {
       "id": "I-000001",
-      "date": "2026-10-10",
+      "date": "2026-10-20",
       "person_id": "P-0001",
+      "channel": "meeting",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000002",
+      "date": "2026-10-14",
+      "person_id": "P-0001",
+      "channel": "text",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000003",
+      "date": "2026-10-04",
+      "person_id": "P-0001",
+      "channel": "text",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000004",
+      "date": "2026-09-12",
+      "person_id": "P-0002",
+      "channel": "email",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000005",
+      "date": "2026-10-14",
+      "person_id": "P-0003",
+      "channel": "meeting",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000006",
+      "date": "2026-10-05",
+      "person_id": "P-0004",
+      "channel": "email",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000007",
+      "date": "2026-10-05",
+      "person_id": "P-0005",
+      "channel": "text",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000008",
+      "date": "2026-09-27",
+      "person_id": "P-0005",
+      "channel": "text",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000009",
+      "date": "2026-09-23",
+      "person_id": "P-0005",
+      "channel": "text",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000010",
+      "date": "2026-08-15",
+      "person_id": "P-0005",
+      "channel": "call",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000011",
+      "date": "2026-10-18",
+      "person_id": "P-0006",
+      "channel": "Slack",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000012",
+      "date": "2026-10-21",
+      "person_id": "P-0007",
+      "channel": "text",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000013",
+      "date": "2026-10-13",
+      "person_id": "P-0007",
+      "channel": "Slack",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000014",
+      "date": "2026-10-01",
+      "person_id": "P-0007",
+      "channel": "text",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000015",
+      "date": "2026-09-18",
+      "person_id": "P-0007",
+      "channel": "email",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000016",
+      "date": "2026-10-11",
+      "person_id": "P-0008",
+      "channel": "text",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000017",
+      "date": "2026-08-09",
+      "person_id": "P-0009",
+      "channel": "text",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000018",
+      "date": "2026-07-22",
+      "person_id": "P-0009",
+      "channel": "meeting",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000019",
+      "date": "2026-10-13",
+      "person_id": "P-0010",
+      "channel": "Slack",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000020",
+      "date": "2026-10-01",
+      "person_id": "P-0010",
+      "channel": "call",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000021",
+      "date": "2026-09-29",
+      "person_id": "P-0010",
+      "channel": "Slack",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000022",
+      "date": "2026-08-14",
+      "person_id": "P-0010",
+      "channel": "meeting",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000023",
+      "date": "2026-09-01",
+      "person_id": "P-0011",
+      "channel": "email",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000024",
+      "date": "2026-08-14",
+      "person_id": "P-0011",
+      "channel": "Slack",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000025",
+      "date": "2026-08-14",
+      "person_id": "P-0011",
+      "channel": "meeting",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000026",
+      "date": "2026-10-17",
+      "person_id": "P-0012",
+      "channel": "text",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000027",
+      "date": "2026-09-20",
+      "person_id": "P-0013",
+      "channel": "Slack",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000028",
+      "date": "2026-08-31",
+      "person_id": "P-0013",
+      "channel": "meeting",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000029",
+      "date": "2026-09-06",
+      "person_id": "P-0013",
+      "channel": "Slack",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000030",
+      "date": "2026-10-19",
+      "person_id": "P-0014",
+      "channel": "email",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000031",
+      "date": "2026-10-05",
+      "person_id": "P-0014",
+      "channel": "text",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000032",
+      "date": "2026-09-11",
+      "person_id": "P-0014",
+      "channel": "meeting",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000033",
+      "date": "2026-09-01",
+      "person_id": "P-0014",
+      "channel": "meeting",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000034",
+      "date": "2026-07-20",
+      "person_id": "P-0015",
+      "channel": "text",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000035",
+      "date": "2026-07-12",
+      "person_id": "P-0015",
+      "channel": "email",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000036",
+      "date": "2026-06-28",
+      "person_id": "P-0015",
+      "channel": "call",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000037",
+      "date": "2026-10-01",
+      "person_id": "P-0016",
+      "channel": "meeting",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000038",
+      "date": "2026-09-11",
+      "person_id": "P-0016",
+      "channel": "call",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000039",
+      "date": "2026-10-08",
+      "person_id": "P-0017",
+      "channel": "text",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000040",
+      "date": "2026-09-25",
+      "person_id": "P-0017",
+      "channel": "meeting",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000041",
+      "date": "2026-09-12",
+      "person_id": "P-0017",
+      "channel": "meeting",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000042",
+      "date": "2026-08-21",
+      "person_id": "P-0017",
+      "channel": "meeting",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000043",
+      "date": "2026-10-15",
+      "person_id": "P-0018",
+      "channel": "email",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000044",
+      "date": "2026-10-05",
+      "person_id": "P-0018",
+      "channel": "call",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000045",
+      "date": "2026-09-13",
+      "person_id": "P-0019",
+      "channel": "meeting",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000046",
+      "date": "2026-09-03",
+      "person_id": "P-0019",
+      "channel": "Slack",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000047",
+      "date": "2026-08-20",
+      "person_id": "P-0020",
+      "channel": "meeting",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000048",
+      "date": "2026-09-27",
+      "person_id": "P-0021",
+      "channel": "call",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000049",
+      "date": "2026-09-21",
+      "person_id": "P-0021",
+      "channel": "text",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000050",
+      "date": "2026-08-24",
+      "person_id": "P-0021",
+      "channel": "meeting",
+      "actor": "them",
+      "summary": "They replied with questions",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000051",
+      "date": "2026-10-20",
+      "person_id": "P-0022",
+      "channel": "meeting",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000052",
+      "date": "2026-10-03",
+      "person_id": "P-0022",
+      "channel": "call",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000053",
+      "date": "2026-10-06",
+      "person_id": "P-0022",
+      "channel": "meeting",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000054",
+      "date": "2026-09-20",
+      "person_id": "P-0022",
+      "channel": "Slack",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000055",
+      "date": "2026-10-10",
+      "person_id": "P-0023",
+      "channel": "email",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000056",
+      "date": "2026-10-07",
+      "person_id": "P-0024",
+      "channel": "Slack",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000057",
+      "date": "2026-10-02",
+      "person_id": "P-0024",
+      "channel": "call",
+      "actor": "owner",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000058",
+      "date": "2026-06-25",
+      "person_id": "P-0025",
+      "channel": "Slack",
+      "actor": "both",
+      "summary": "Caught up on next steps",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000059",
+      "date": "2026-06-09",
+      "person_id": "P-0025",
+      "channel": "Slack",
+      "actor": "claudia",
+      "summary": "Claudia drafted a follow-up (approved)",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000060",
+      "date": "2026-05-16",
+      "person_id": "P-0025",
       "channel": "email",
       "actor": "owner",
-      "summary": "Synced on launch kit timeline",
+      "summary": "You sent a status update",
+      "source_link": "example"
+    },
+    {
+      "id": "I-000061",
+      "date": "2026-04-26",
+      "person_id": "P-0025",
+      "channel": "meeting",
+      "actor": "them",
+      "summary": "They replied with questions",
       "source_link": "example"
     }
   ]
 };
 /* LEDGER-DATA-END */
+
+// Kept outside the data block so build-brain (which rewrites only the block above) never drops them.
+const UPDATED: string = LEDGER.generated;
+const COVERAGE: string = (LEDGER as Ledger & { coverage?: string }).coverage ?? (LEDGER.example ? "Example data: every person, org and project here is made up. Yours is rebuilt from your Claudia Ledger." : "");
 
 type Person = { id: string; name: string; org_id: string | null; role: string; network: string; relationship: string; cadence_days: number; last_contact: string; days_since: number; health: string; city: string; how_met: string };
 type Org = { id: string; name: string };
@@ -119,7 +1495,7 @@ type Project = { id: string; name: string; org_id: string; status: string };
 type Link = { from_id: string; to_id: string; type: string; basis: string; source: string };
 type Commitment = { id: string; direction: string; person_id: string; what: string; due: string; status: string; source_link: string };
 type Interaction = { id: string; date: string; person_id: string; channel: string; actor: string; summary: string; source_link: string };
-type Ledger = { generated: string; example: boolean; coverage?: string; owner?: { name: string }; people: Person[]; orgs: Org[]; projects: Project[]; links: Link[]; commitments: Commitment[]; interactions: Interaction[] };
+type Ledger = { generated: string; example: boolean; owner?: { name: string }; people: Person[]; orgs: Org[]; projects: Project[]; links: Link[]; commitments: Commitment[]; interactions: Interaction[] };
 type Kind = "owner" | "person" | "org" | "project";
 type GEdge = { from_id: string; to_id: string; type: string; basis: string; kind: "link" | "owner" | "commit"; commit?: Commitment };
 type GNode = { id: string; label: string; kind: Kind; health: string | null; network: string | null; weight: number; x: number; y: number; r: number; ph: number };
@@ -297,7 +1673,7 @@ function layout(n: number, springs: Array<[number, number]>, ring: Array<number 
 }
 
 function daysLabel(d: number): string {
-  return d === 0 ? "today" : d === 1 ? "1 day ago" : `${d} days ago`;
+  return d < 0 ? "not logged" : d === 0 ? "today" : d === 1 ? "1 day ago" : `${d} days ago`;
 }
 function nameOf(x: string): string {
   if (x === OWNER_ID) return OWNER_NAME;
@@ -1218,15 +2594,9 @@ export default function PeopleGraph() {
   return (
     <Page
       title="Claudia's Brain"
-      summary={LEDGER.example ? "Example data: every person, org and project here is made up. Yours is rebuilt from your Claudia Ledger." : `Built from your Claudia Ledger. Last updated ${LEDGER.generated}.`}
+      summary={`Last updated ${UPDATED}. ${COVERAGE}`}
       width="full"
     >
-      {(LEDGER.coverage || LEDGER.generated) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", marginBottom: 10, fontSize: theme.font.caption.fontSize, color: theme.text.secondary }}>
-          <span>Last updated {LEDGER.generated}</span>
-          {LEDGER.coverage ? <span style={{ color: theme.text.tertiary }}>{"\u00b7"} Coverage: {LEDGER.coverage}</span> : null}
-        </div>
-      )}
       <div ref={rowRef} style={{ display: "flex", flexWrap: narrow ? "wrap" : "nowrap", gap: 14, alignItems: "stretch" }}>
         <div ref={stageRef} style={{ position: "relative", flex: "1 1 auto", width: narrow ? "100%" : undefined, minWidth: 0, aspectRatio: narrow ? "2 / 3" : "10 / 7", borderRadius: theme.radius.lg, overflow: "hidden", border: `1px solid ${theme.border.weak}` }}>
           <canvas
@@ -1378,7 +2748,7 @@ function NudgeList({ onPick, onPromises }: { onPick: (id: string) => void; onPro
       {quiet.map((p) => (
         <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => onPick(p.id)} style={{ ...small, border: `1px solid ${theme.border.weak}`, background: theme.fill.secondary, color: theme.text.primary, borderRadius: theme.radius.full, padding: "3px 10px", cursor: "pointer", fontFamily: theme.font.family }}>{p.name}</button>
-          <span style={{ ...small, color: tone[p.health] }}>{p.days_since}d, usually every {p.cadence_days}d</span>
+          <span style={{ ...small, color: tone[p.health] }}>{p.days_since < 0 ? "no contact logged" : `${p.days_since}d, usually every ${p.cadence_days}d`}</span>
         </div>
       ))}
       <button onClick={onPromises} style={{ ...small, alignSelf: "flex-start", minHeight: 36, border: `1px solid ${theme.border.default}`, background: theme.fill.secondary, color: theme.text.primary, borderRadius: theme.radius.md, padding: "6px 12px", cursor: "pointer", fontFamily: theme.font.family }}>See all your open promises</button>
@@ -1503,12 +2873,12 @@ function SidePanel({ id, onPick, onBack, onAsk, onPromises }: { id: string; onPi
         </div>
         <Button label="Back" onClick={onBack} />
       </div>
-      {person && <div style={{ ...small, color: theme.text.secondary }}>{person.role}{person.org_id ? `, ${nameOf(person.org_id)}` : ""} · {person.city} · {person.network} · {person.relationship} · met via {person.how_met}</div>}
+      {person && <div style={{ ...small, color: theme.text.secondary }}>{[[person.role, person.org_id ? nameOf(person.org_id) : ""].filter(Boolean).join(", "), person.city, person.network, person.relationship, person.how_met ? `met via ${person.how_met}` : ""].filter(Boolean).join(" · ")}</div>}
       {project && <div style={{ ...small, color: theme.text.secondary }}>{project.status} · {nameOf(project.org_id)}</div>}
       {person && (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 10, height: 10, borderRadius: 5, background: tone[person.health], display: "inline-block", flex: "0 0 auto" }} />
-          <span style={{ ...small, color: theme.text.primary }}>{person.health} · last contact {daysLabel(person.days_since)} · usually every {person.cadence_days} days</span>
+          <span style={{ ...small, color: theme.text.primary }}>{person.health || "health not set"} · last contact {daysLabel(person.days_since)} · usually every {person.cadence_days} days</span>
         </div>
       )}
       {commitGroup("You owe", mine)}

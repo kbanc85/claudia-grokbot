@@ -133,6 +133,7 @@ ID_COUNTER_KEYS: dict[str, str] = {
 }
 
 # Commands that change ledger files (require --bot-id / CLAUDIA_BOT_ID).
+# export-brain / build-brain are read-only against the ledger CSVs.
 WRITE_COMMANDS = frozenset(
     {
         "init",
@@ -143,8 +144,6 @@ WRITE_COMMANDS = frozenset(
         "forget",
         "restore",
         "health",
-        "export-brain",
-        "build-brain",
     }
 )
 
@@ -1563,13 +1562,46 @@ def refresh_person_derived(people: list[dict[str, str]], generated: str) -> None
         p["health"] = compute_health(ds, cadence)
 
 
+def _format_coverage_dict(obj: Mapping[str, Any]) -> str:
+    """Turn a coverage JSON object into one plain-language strip."""
+    if obj.get("text"):
+        return str(obj["text"]).strip()
+
+    def fmt_list(val: Any) -> str:
+        if isinstance(val, (list, tuple)):
+            return ", ".join(str(s) for s in val)
+        return str(val)
+
+    bits: list[str] = []
+    seeing = obj.get("seeing") or obj.get("can_see") or obj.get("sources") or obj.get(
+        "scanned"
+    )
+    not_seeing = obj.get("not_seeing") or obj.get("cannot_see") or obj.get("missing")
+    through = obj.get("through") or obj.get("through_date") or obj.get("until")
+    if seeing and (obj.get("seeing") or obj.get("can_see")):
+        bits.append(f"seeing {fmt_list(seeing)}")
+    elif seeing:
+        bits.append(f"scanned {fmt_list(seeing)}")
+    if not_seeing:
+        bits.append(f"not seeing {fmt_list(not_seeing)}")
+    if through:
+        bits.append(f"through {through}")
+    if bits:
+        return "; ".join(bits)
+    return ""
+
+
 def load_coverage_text(
     home: Path | None,
     *,
     coverage_arg: str | None = None,
     coverage_file: str | None = None,
+    ledger: Path | None = None,
 ) -> str:
-    """Coverage strip text from --coverage, a JSON/text file, or work/coverage.json."""
+    """Coverage strip: --coverage, a file, work/coverage.json, or owner.json.
+
+    Returns empty string when nothing is configured (caller omits the field).
+    """
     if coverage_arg is not None and str(coverage_arg).strip():
         return str(coverage_arg).strip()
     candidates: list[Path] = []
@@ -1592,23 +1624,17 @@ def load_coverage_text(
             if isinstance(obj, str):
                 return obj.strip()
             if isinstance(obj, dict):
-                if obj.get("text"):
-                    return str(obj["text"]).strip()
-                # Common shape: {sources: [...], through: "YYYY-MM-DD"}
-                sources = obj.get("sources") or obj.get("scanned")
-                through = obj.get("through") or obj.get("through_date") or obj.get("until")
-                bits: list[str] = []
-                if isinstance(sources, (list, tuple)):
-                    bits.append("scanned " + ", ".join(str(s) for s in sources))
-                elif sources:
-                    bits.append(f"scanned {sources}")
-                if through:
-                    bits.append(f"through {through}")
-                if bits:
-                    return "; ".join(bits)
-                return json.dumps(obj, ensure_ascii=False)
+                formatted = _format_coverage_dict(obj)
+                return formatted or json.dumps(obj, ensure_ascii=False)
             return raw
         return raw
+    if ledger is not None:
+        owner = load_owner_json(ledger)
+        raw_cov = owner.get("coverage")
+        if isinstance(raw_cov, str) and raw_cov.strip():
+            return raw_cov.strip()
+        if isinstance(raw_cov, dict):
+            return _format_coverage_dict(raw_cov)
     return ""
 
 
@@ -1620,16 +1646,17 @@ def export_brain_obj(
     generated: str | None = None,
     coverage: str = "",
 ) -> dict[str, Any]:
+    """Build Brain JSON from the ledger. Read-only: never writes CSV files.
+
+    People with no last_contact get days_since=-1 so the Page can show
+    'no contact logged'. Optional coverage is omitted when empty; the Page
+    falls back to its example note via the COVERAGE constant after the
+    LEDGER-DATA markers.
+    """
     generated = generated or today_iso()
-    people_rows = read_rows(ledger, PEOPLE)
-    old_health = {r["person_id"]: r.get("health", "") for r in people_rows}
+    # Copy rows so derived health/days stay in-memory only.
+    people_rows = [dict(r) for r in read_rows(ledger, PEOPLE)]
     refresh_person_derived(people_rows, generated)
-    # Persist refreshed health so CSV stays consistent with Brain.
-    write_rows(ledger, PEOPLE, people_rows)
-    for r in people_rows:
-        record_health_change_if_needed(
-            ledger, r, old_health.get(r["person_id"], ""), source="export-brain"
-        )
 
     people: list[dict[str, Any]] = []
     for r in people_rows:
@@ -1646,7 +1673,8 @@ def export_brain_obj(
                 "relationship": r["relationship"],
                 "cadence_days": cadence,
                 "last_contact": lc,
-                "days_since": ds if ds is not None else 9999,
+                # Page expects negative when never contacted (not 9999).
+                "days_since": ds if ds is not None else -1,
                 "health": r["health"],
                 "city": r["city"],
                 "how_met": r["how_met"],
@@ -1698,10 +1726,9 @@ def export_brain_obj(
         for r in read_rows(ledger, INTERACTIONS)
     ]
 
-    return {
+    out: dict[str, Any] = {
         "generated": generated,
         "example": bool(example),
-        "coverage": coverage or "",
         "owner": {"name": owner_name},
         "people": people,
         "orgs": orgs,
@@ -1710,6 +1737,9 @@ def export_brain_obj(
         "commitments": commitments,
         "interactions": interactions,
     }
+    if coverage.strip():
+        out["coverage"] = coverage.strip()
+    return out
 
 
 def cmd_export_brain(args: argparse.Namespace) -> int:
@@ -1719,6 +1749,7 @@ def cmd_export_brain(args: argparse.Namespace) -> int:
         home,
         coverage_arg=getattr(args, "coverage", None),
         coverage_file=getattr(args, "coverage_file", None),
+        ledger=ledger,
     )
     obj = export_brain_obj(
         ledger,
@@ -1779,6 +1810,7 @@ def cmd_build_brain(args: argparse.Namespace) -> int:
         home,
         coverage_arg=getattr(args, "coverage", None),
         coverage_file=getattr(args, "coverage_file", None),
+        ledger=ledger,
     )
     try:
         template = fetch_text(template_src)
@@ -1792,6 +1824,12 @@ def cmd_build_brain(args: argparse.Namespace) -> int:
         out = inject_ledger(template, obj)
     except LedgerError as e:
         die(str(e))
+    # Sanity: code after the data end marker (UPDATED / COVERAGE / UI) must remain.
+    if "const UPDATED" not in out or "const COVERAGE" not in out:
+        die(
+            "build-brain output is missing UPDATED/COVERAGE after the data end "
+            "marker. Re-download the hosted Brain template; do not redesign it."
+        )
     Path(args.output).write_text(out, encoding="utf-8")
     print(f"wrote {args.output}")
     return 0
@@ -2244,7 +2282,10 @@ examples:
 
     p_exp = sub.add_parser(
         "export-brain",
-        help="Export Ledger JSON for the Brain Page (no email/phone/notes)",
+        help=(
+            "Export Ledger JSON for the Brain Page (read-only; "
+            "no email/phone/notes; does not write CSVs)"
+        ),
     )
     p_exp.add_argument("-o", "--output", help="Write JSON to this path (default: stdout)")
     p_exp.add_argument("--owner", help="Owner display name (default: owner.json or You)")

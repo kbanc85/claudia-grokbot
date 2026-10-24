@@ -1,0 +1,11 @@
+log_id,timestamp,action,ref,detail,approved_by_owner
+L-000001,2026-10-24T08:58:00Z,add_org,O-0001,Added org Northwind Labs,yes
+L-000002,2026-10-24T08:58:00Z,add_org,O-0002,Added org Harbor Advisory,yes
+L-000003,2026-10-24T08:58:00Z,add_project,J-0001,Added project Launch kit,yes
+L-000004,2026-10-24T08:58:00Z,add_person,P-0001,Added person Alex Rivera,yes
+L-000005,2026-10-24T08:58:00Z,add_person,P-0002,Added person Jordan Lee,yes
+L-000006,2026-10-24T08:58:00Z,add_link,ME->O-0001,works_at,yes
+L-000007,2026-10-24T08:58:01Z,add_link,P-0001->J-0001,owns,yes
+L-000008,2026-10-24T08:58:01Z,add_commitment,C-0001,I owe: Send launch draft,yes
+L-000009,2026-10-24T08:58:01Z,add_commitment,C-0002,owed to me: Intro to Harbor board,yes
+L-000010,2026-10-24T08:58:01Z,add_interaction,I-000001,Synced on launch kit timeline,yes

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # Made with Grok Bot.
-"""Fill Claudia message templates from JSON or the ledger.
+"""Fill Claudia message templates from JSON or (with --demo) the ledger.
 
-Missing placeholders fail loudly (exit 1). Extra data keys are ignored.
+Without --data, stand-in text is never invented. Missing placeholders fail
+loudly (exit 1) unless --demo is passed. Extra data keys are ignored.
 
 Examples:
   export CLAUDIA_HOME=/workspace/claudia-<bot-id>
-  python3 claudia_render.py --home "$CLAUDIA_HOME" --template morning_brief --data vars.json
-  python3 claudia_render.py --home "$CLAUDIA_HOME" --template promise_catch
+  python3 claudia_render.py --home "$CLAUDIA_HOME" --template morning_brief \\
+      --data "$CLAUDIA_HOME/work/morning-brief.json"
+  python3 claudia_render.py --home "$CLAUDIA_HOME" --template welcome_tour --demo
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ from pathlib import Path
 from typing import Any, Mapping
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
-COMMENT = re.compile(r"^#.*$", re.MULTILINE)
 
 TEMPLATES = {
     "morning_brief": "morning_brief.txt",
@@ -107,8 +108,19 @@ def read_csv_rows(ledger: Path, name: str) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def data_from_ledger(ledger: Path, template: str) -> dict[str, Any]:
-    """Build a sensible default map from live ledger CSVs for supported templates."""
+def parse_safe(s: str) -> date | None:
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def demo_data_from_ledger(ledger: Path, template: str) -> dict[str, Any]:
+    """Build demo placeholder values from live ledger CSVs.
+
+    Only used with --demo. Never claims a 'Clean day' for meditate without
+    an explicit --data file from the bot.
+    """
     today = datetime.now(timezone.utc).date()
     people = read_csv_rows(ledger, PEOPLE)
     commits = read_csv_rows(ledger, COMMITMENTS)
@@ -169,7 +181,7 @@ def data_from_ledger(ledger: Path, template: str) -> dict[str, Any]:
                 )
         return {
             "day_date": today.strftime("%A, %Y-%m-%d"),
-            "coverage_seeing": "ledger",
+            "coverage_seeing": "ledger (demo)",
             "coverage_not_seeing": "(connect apps for live sources)",
             "needs_attention": needs,
             "watch": "\n".join(watch_bits) or "- No cooling relationships flagged.",
@@ -198,10 +210,11 @@ def data_from_ledger(ledger: Path, template: str) -> dict[str, Any]:
         }
 
     if template == "meditate":
+        # Never invent "Clean day" without a real --data file from the bot.
         return {
-            "gap_line": "Clean day; nothing to change",
-            "proposed_summary": "no rule changes",
-            "pattern": "(fill from today's Claudia_Log)",
+            "gap_line": "(demo: fill gap_line from today's Claudia log)",
+            "proposed_summary": "(demo: no rule changes until you review)",
+            "pattern": "(demo: fill from today's Claudia log)",
             "page_link": "(The Gap journal Page link)",
         }
 
@@ -216,7 +229,7 @@ def data_from_ledger(ledger: Path, template: str) -> dict[str, Any]:
         return {
             "headline_1": f"Open promises: {len(open_commits)} ({len(overdue)} overdue)",
             "headline_2": f"People in ledger: {len(people)}",
-            "headline_3": "Relationship health: recompute with claudia-ledger before publishing",
+            "headline_3": "Relationship health: recompute with claudia_ledger before publishing",
             "page_link": "(Weekly review Page link)",
             "decisions": "Any merges, cadence changes, or recovery plans to approve?",
         }
@@ -233,14 +246,7 @@ def data_from_ledger(ledger: Path, template: str) -> dict[str, Any]:
                 pass
         return {"name": name}
 
-    raise RenderError(f"ledger fill not defined for template {template!r}; pass --data")
-
-
-def parse_safe(s: str) -> date | None:
-    try:
-        return date.fromisoformat(s)
-    except ValueError:
-        return None
+    raise RenderError(f"demo fill not defined for template {template!r}; pass --data")
 
 
 HOME_HELP = (
@@ -248,6 +254,14 @@ HOME_HELP = (
     "Example: export CLAUDIA_HOME=/workspace/claudia-<bot-id> "
     "(or /cursor/stores/<its-store>/claudia). "
     "There is no shared default."
+)
+
+NO_DATA_HELP = (
+    "Pass --data with a JSON file of every placeholder, "
+    "or pass --demo to fill sample values from the ledger. "
+    "Scratch JSON belongs under $CLAUDIA_HOME/work/ "
+    "(for example $CLAUDIA_HOME/work/morning-brief.json). "
+    "Without --data or --demo, stand-in text is never invented."
 )
 
 
@@ -262,8 +276,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claudia_render.py",
         description=(
-            "Fill Claudia message templates from JSON or the ledger. "
-            "Missing placeholders fail loudly. Made with Grok Bot."
+            "Fill Claudia message templates from JSON. "
+            "Without --data, pass --demo for sample fills; otherwise missing "
+            "placeholders fail loudly. Made with Grok Bot."
         ),
     )
     p.add_argument(
@@ -279,7 +294,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--data",
-        help="JSON object file of placeholder -> value",
+        help=(
+            "JSON object file of placeholder -> value "
+            "(prefer $CLAUDIA_HOME/work/*.json)"
+        ),
+    )
+    p.add_argument(
+        "--demo",
+        action="store_true",
+        help="Fill sample values from the ledger when --data is omitted",
     )
     p.add_argument(
         "--ledger",
@@ -309,13 +332,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.data:
             data = load_json_data(Path(args.data))
-        else:
+        elif args.demo:
             ledger = (
                 Path(args.ledger).expanduser().resolve()
                 if args.ledger
                 else home / "ledger"
             )
-            data = data_from_ledger(ledger, args.template)
+            data = demo_data_from_ledger(ledger, args.template)
+        else:
+            raise RenderError(NO_DATA_HELP)
         out = render(text, data)
     except RenderError as e:
         print(f"error: {e}", file=sys.stderr)

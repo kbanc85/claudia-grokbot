@@ -1,0 +1,8 @@
+# Made with Grok Bot.
+# Placeholders: headline_1, headline_2, headline_3, page_link, decisions
+Weekly review ready.
+{headline_1}
+{headline_2}
+{headline_3}
+{page_link}
+{decisions}

@@ -1,72 +1,99 @@
-# claudia-grokbot
+# Claudia, Chief of Staff
 
-Hosted backend for the public Grok Bot template **Claudia, Chief of Staff**.
+Never drop a promise again.
 
-Installed copies of Claudia used to improvise their own ledger CSVs and their own “Claudia’s Brain” Page, so behavior drifted. This repo is the single source every copy downloads and runs, so people, orgs, projects, promises, and the Brain Page stay identical everywhere.
+**Claudia** is a public [Grok Bot](https://x.ai/bot/AkJewmJ9D2DlMpBD5XaCG) that catches every "I'll send it Friday" across your email, Slack, and calls, warns you before something is late, and briefs you every morning on who needs you.
 
-Copies need only **Python 3** and **curl** on a Linux box. The bot is the operator of these tools — not the owner.
+<p align="center">
+  <img src="docs/images/claudia-portrait.jpg" alt="Claudia pixel portrait" width="320" />
+</p>
 
 Made with Grok Bot.
 
-## What is here
+## What Claudia does
+
+- **Catches promises** in email, Slack, calendar, and call notes, both ways (you owe / owed to you).
+- **Warns before something is late** (48 hours out, due day, and overdue), with recovery options.
+- **Morning brief:** urgency first (Needs attention, Watch, Calendar), with a coverage line for what she can and cannot see.
+- **End-of-day meditate:** compares what she was instructed to do with what you adjusted, and proposes judgment rules. Nothing changes without your yes.
+- **Weekly review:** wins, promise audit, relationship health, who to reconnect with, next week.
+- **Routes substantial work** to specialist bots when you have a team, and keeps approvals with you.
+- **Approval rule:** she never sends email, messages, posts, invites, purchases, or shares without your explicit yes in chat.
+
+<p align="center">
+  <img src="docs/images/morning-brief-sample.png" alt="Example morning brief" width="720" />
+</p>
+
+## Claudia's Brain
+
+A live people-and-promises Page with you at the center. Every person and promise she catches becomes a node. Day one it is a sketch; after a week it shows who is active or cooling.
+
+<p align="center">
+  <img src="docs/images/brain-graph.png" alt="Claudia's Brain graph with example data" width="900" />
+</p>
+
+Search highlights matches. Open a person card for health, cadence, and open promises. Paste "Follow up on C-xxxx" back into chat when you want her next move.
+
+| Full graph | Search | Person card | Ask prompt |
+|------------|--------|-------------|------------|
+| ![graph](docs/images/brain-graph.png) | ![search](docs/images/brain-search.png) | ![card](docs/images/brain-person-card.png) | ![ask](docs/images/brain-ask-prompt.png) |
+
+Example data only. No private names.
+
+## 3-minute welcome tour
+
+On first chat she turns routines on quietly, then greets you, confirms name and timezone, connects the apps she can see through, runs a first catch over the last 7 days, builds Claudia's Brain, and asks a few quick questions (who matters, priorities, when to meditate). Setup is the go-ahead; she confirms the schedule in one line.
+
+<p align="center">
+  <img src="docs/images/claudia-meditation.jpg" alt="Claudia meditating" width="320" />
+</p>
+
+## Install
+
+Install the public template:
+
+**[Claudia, Chief of Staff on x.ai](https://x.ai/bot/AkJewmJ9D2DlMpBD5XaCG)**
+
+Each installed copy runs on its own Linux box with Python 3 and curl, reads your sources through the packed plugins (Gmail, Google Calendar, Slack, Otter, Google Drive, Google Sheets), and downloads the shared tools from this repo so every copy behaves the same.
+
+## What this repo is for
+
+This repository is the **hosted backend** every installed Claudia downloads and runs:
 
 | Path | Purpose |
 |------|---------|
-| `ledger/claudia_ledger.py` | One-file stdlib CLI: init, add/update, close, merge, forget, check, export-brain, build-brain |
-| `ledger/templates/*.csv` | Empty starter CSVs with exact headers |
-| `ledger/example/` | Fictional sample ledger + `test_ledger.py` |
-| `brain/claudia-brain.canvas.tsx` | Claudia’s Brain Page (design fixed; data in the LEDGER-DATA marker block) |
-| `docs/FOR-BOTS.md` | Prescriptive operating manual written for the bot itself |
-| `VERSION` | `1.0.0` / `2026-10-24` for upgrade checks |
+| `ledger/claudia_ledger.py` | Stdlib CLI: init, add/update, close, merge, forget, backups/restore, check, export-brain, build-brain |
+| `scan/claudia_scan.py` | Propose commitment candidates from normalized JSONL (bot judges and records) |
+| `templates/` | Message shells + renderer for morning brief, catch, meditate, weekly review, welcome |
+| `update/claudia_update.py` | Version check, MANIFEST.sha256 verify, atomic self-update |
+| `setup/first_run.sh` | Idempotent first-run (never wipes existing ledger data) |
+| `brain/claudia-brain.canvas.tsx` | Claudia's Brain Page (design fixed; data in the LEDGER-DATA block) |
+| `docs/FOR-BOTS.md` | Exact operating manual the bot follows for every moment |
+| `evals/` | Fictional promise-detection fixtures and precision/recall runner |
+| `VERSION` / `MANIFEST.sha256` | Upgrade checks |
 
-CSV header rows stay header-only (no comments). The “Made with Grok Bot” note for those files is this README and the tool that creates them.
+Bots must not hand-edit CSVs or redesign the Brain. Full command sequences: [`docs/FOR-BOTS.md`](docs/FOR-BOTS.md).
 
-## Raw URLs
+## Based on
 
-```text
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/VERSION
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/claudia_ledger.py
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/brain/claudia-brain.canvas.tsx
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/docs/FOR-BOTS.md
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/people.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/organizations.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/projects.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/commitments.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/interactions.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/links.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/claudia_log.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/merges.csv
-https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/templates/health_history.csv
-```
-
-## Commands a bot should run
-
-```bash
-# Install / refresh tools
-mkdir -p /workspace/claudia-tools /workspace/claudia-ledger
-curl -fsSL -o /workspace/claudia-tools/claudia_ledger.py \
-  https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/ledger/claudia_ledger.py
-curl -fsSL -o /workspace/claudia-tools/claudia-brain.canvas.tsx \
-  https://raw.githubusercontent.com/kbanc85/claudia-grokbot/main/brain/claudia-brain.canvas.tsx
-
-# First time
-python3 /workspace/claudia-tools/claudia_ledger.py --ledger /workspace/claudia-ledger init
-
-# Before every Brain refresh
-python3 /workspace/claudia-tools/claudia_ledger.py --ledger /workspace/claudia-ledger check
-python3 /workspace/claudia-tools/claudia_ledger.py --ledger /workspace/claudia-ledger build-brain \
-  --template /workspace/claudia-tools/claudia-brain.canvas.tsx \
-  -o /tmp/claudia-brain-ready.canvas.tsx
-```
-
-Full day-to-day rules: [`docs/FOR-BOTS.md`](docs/FOR-BOTS.md).
+Claudia is based on [claudia.aiadopters.club](https://claudia.aiadopters.club) and the original open-source Claudia at [github.com/kbanc85/claudia](https://github.com/kbanc85/claudia). This repo adapts that work for Grok Bot: deterministic CSV ledger on the bot's computer, hosted Brain Page, routines, and strict approval rules.
 
 ## Tests
 
 ```bash
-python3 -m unittest ledger/example/test_ledger.py -v
+python3 -m unittest discover -s ledger/example -p 'test_*.py' -v
+python3 -m unittest discover -s templates -p 'test_*.py' -v
+python3 -m unittest discover -s scan -p 'test_*.py' -v
+python3 evals/run_eval.py
+bash setup/first_run.sh
 ```
 
-## Contract snapshot
+## Maintainers
 
-Brain data is only the JSON between `/* LEDGER-DATA-START */` and `/* LEDGER-DATA-END */` as `const LEDGER: Ledger = …`. Export never includes email, phone, or notes. Project ids are `J-####` (not `PR-####`) so the Page does not treat them as people.
+```bash
+python3 update/claudia_update.py manifest --root .
+```
+
+Regenerate `MANIFEST.sha256` last whenever shipped files change.
+
+Made with Grok Bot.

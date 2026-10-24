@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import shutil
 import sys
@@ -138,6 +139,7 @@ DEFAULT_BRAIN_URL = (
 )
 LEDGER_START = "/* LEDGER-DATA-START */"
 LEDGER_END = "/* LEDGER-DATA-END */"
+# Default retention; override with CLAUDIA_BACKUP_KEEP or --backup-keep.
 BACKUP_KEEP = 30
 
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -201,6 +203,20 @@ class LedgerError(Exception):
     """User-facing ledger problem."""
 
 
+def backup_keep_count(override: int | None = None) -> int:
+    """How many timestamped snapshots to retain under backups/."""
+    if override is not None:
+        if override < 1:
+            raise LedgerError("--backup-keep must be >= 1")
+        return override
+    raw = os.environ.get("CLAUDIA_BACKUP_KEEP", "").strip()
+    if raw:
+        if not raw.isdigit() or int(raw) < 1:
+            raise LedgerError("CLAUDIA_BACKUP_KEEP must be an integer >= 1")
+        return int(raw)
+    return BACKUP_KEEP
+
+
 def die(msg: str, code: int = 1) -> None:
     print(f"error: {msg}", file=sys.stderr)
     raise SystemExit(code)
@@ -253,9 +269,13 @@ def write_rows(ledger: Path, filename: str, rows: Sequence[Mapping[str, str]]) -
             writer.writerow({k: row.get(k, "") for k in expected})
 
 
-def backup_ledger(ledger: Path) -> Path:
+def backup_ledger(ledger: Path, *, keep: int | None = None) -> Path:
+    """Snapshot CSVs (+ notes/, owner.json) before a write. Keeps the last N."""
     src_files = [ledger / name for name in HEADERS]
+    owner = ledger / "owner.json"
     existing = [p for p in src_files if p.exists()]
+    if owner.exists():
+        existing.append(owner)
     if not existing:
         return ledger
     stamp = ts_stamp()
@@ -274,10 +294,73 @@ def backup_ledger(ledger: Path) -> Path:
     # prune old backups
     root = backups_dir(ledger)
     stamps = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
-    while len(stamps) > BACKUP_KEEP:
+    retain = backup_keep_count(keep)
+    while len(stamps) > retain:
         old = stamps.pop(0)
         shutil.rmtree(old, ignore_errors=True)
     return dest
+
+
+def list_backup_stamps(ledger: Path) -> list[Path]:
+    root = backups_dir(ledger)
+    if not root.is_dir():
+        return []
+    return sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
+
+
+def cmd_backups(args: argparse.Namespace) -> int:
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    stamps = list_backup_stamps(ledger)
+    if not stamps:
+        print("no backups yet")
+        return 0
+    print(f"backups in {backups_dir(ledger)} (newest last):")
+    for p in stamps:
+        files = sorted(x.name for x in p.iterdir())
+        print(f"  {p.name}  ({len(files)} entries)")
+    print(f"count: {len(stamps)} (keep {backup_keep_count()})")
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    """Restore a snapshot. Snapshots the current ledger first."""
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    stamp = args.snapshot.strip()
+    if not stamp:
+        die("pass a snapshot name (see: backups)")
+    src = backups_dir(ledger) / stamp
+    if not src.is_dir():
+        die(f"snapshot not found: {stamp}. Run: backups")
+    # Safety: snapshot current state before overwriting.
+    pre = backup_ledger(ledger)
+    print(f"safety snapshot of current state: {pre.name}")
+    # Restore CSVs listed in the snapshot; leave unrelated files alone.
+    restored = 0
+    for name in HEADERS:
+        candidate = src / name
+        if candidate.is_file():
+            shutil.copy2(candidate, ledger / name)
+            restored += 1
+    owner_src = src / "owner.json"
+    if owner_src.is_file():
+        shutil.copy2(owner_src, ledger / "owner.json")
+        restored += 1
+    notes_src = src / "notes"
+    if notes_src.is_dir():
+        dest_notes = notes_dir(ledger)
+        if dest_notes.exists():
+            shutil.rmtree(dest_notes)
+        shutil.copytree(notes_src, dest_notes)
+        restored += 1
+    append_log(
+        ledger,
+        "restore",
+        stamp,
+        f"restored from backups/{stamp}; pre-restore snapshot {pre.name}",
+        approved="yes",
+    )
+    print(f"restored {stamp} ({restored} paths). Re-run check next.")
+    return 0
 
 
 def next_id(rows: Sequence[Mapping[str, str]], col: str, prefix: str, width: int) -> str:
@@ -1395,11 +1478,11 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
 
     if problems:
-        print("CHECK FAILED — fix these before refreshing Claudia's Brain:")
+        print("CHECK FAILED - fix these before refreshing Claudia's Brain:")
         for p in problems:
             print(f"  - {p}")
     else:
-        print("CHECK OK — ledger files, headers, IDs and references look sound.")
+        print("CHECK OK - ledger files, headers, IDs and references look sound.")
 
     if warnings:
         print("Notes (not blocking):")
@@ -1418,8 +1501,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claudia_ledger.py",
         description=(
-            "Claudia Ledger: init, edit, check, and export the CSV ledger "
-            "for Claudia's Brain. Made with Grok Bot."
+            "Claudia Ledger: init, edit, check, backup/restore, and export "
+            "the CSV ledger for Claudia's Brain. Made with Grok Bot."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -1429,6 +1512,8 @@ examples:
   python3 claudia_ledger.py --ledger DIR add commitment --direction "I owe" --person-id P-0001 \\
       --what "Send deck" --due 2026-10-25 --source-link chat:2026-10-24
   python3 claudia_ledger.py --ledger DIR close --id C-0001 --status done
+  python3 claudia_ledger.py --ledger DIR backups
+  python3 claudia_ledger.py --ledger DIR restore 20261024T120000Z
   python3 claudia_ledger.py --ledger DIR check
   python3 claudia_ledger.py --ledger DIR build-brain -o /tmp/brain.canvas.tsx
 """.strip(),
@@ -1437,6 +1522,15 @@ examples:
         "--ledger",
         required=True,
         help="Folder that holds the CSV ledger (e.g. /workspace/claudia-ledger)",
+    )
+    p.add_argument(
+        "--backup-keep",
+        type=int,
+        default=None,
+        help=(
+            f"How many backups to keep (default {BACKUP_KEEP}, "
+            "or CLAUDIA_BACKUP_KEEP)"
+        ),
     )
 
     sub = p.add_subparsers(dest="command", required=True)
@@ -1637,12 +1731,31 @@ examples:
     p_build.add_argument("--generated", help="Override generated date (YYYY-MM-DD)")
     p_build.set_defaults(func=cmd_build_brain)
 
+    p_backups = sub.add_parser(
+        "backups",
+        help="List timestamped snapshots under backups/",
+    )
+    p_backups.set_defaults(func=cmd_backups)
+
+    p_restore = sub.add_parser(
+        "restore",
+        help="Restore a snapshot (takes a safety snapshot of current state first)",
+    )
+    p_restore.add_argument(
+        "snapshot",
+        help="Snapshot folder name under backups/ (see: backups)",
+    )
+    p_restore.set_defaults(func=cmd_restore)
+
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Honor --backup-keep for this process via the env var read by backup_keep_count.
+    if getattr(args, "backup_keep", None) is not None:
+        os.environ["CLAUDIA_BACKUP_KEEP"] = str(args.backup_keep)
     try:
         return int(args.func(args))
     except LedgerError as e:

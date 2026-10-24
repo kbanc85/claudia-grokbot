@@ -29,16 +29,16 @@ Made with Grok Bot.
 A live people-and-promises Page with you at the center. Every person and promise she catches becomes a node. Day one it is a sketch; after a week it shows who is active or cooling.
 
 <p align="center">
-  <img src="docs/images/brain-graph.png" alt="Claudia's Brain graph with example data" width="900" />
+  <img src="docs/images/brain-graph.png" alt="Claudia's Brain full graph with example data" width="900" />
 </p>
 
 Search highlights matches. Open a person card for health, cadence, and open promises. Paste "Follow up on C-xxxx" back into chat when you want her next move.
 
-| Full graph | Search | Person card | Ask prompt |
-|------------|--------|-------------|------------|
-| ![graph](docs/images/brain-graph.png) | ![search](docs/images/brain-search.png) | ![card](docs/images/brain-person-card.png) | ![ask](docs/images/brain-ask-prompt.png) |
+| Full graph | Search for Sarah | Person card (Mia C.) | Ask Claudia about this? |
+|------------|------------------|----------------------|-------------------------|
+| ![Full graph of Claudia's Brain with example people and promises](docs/images/brain-graph.png) | ![Search results highlighting Sarah](docs/images/brain-search.png) | ![Person card for Mia C. with health, promises, and timeline](docs/images/brain-person-card.png) | ![Ask Claudia about this? prompt for an open promise](docs/images/brain-ask-prompt.png) |
 
-Example data only. No private names.
+Real captures of the hosted Page with example data only. No private names.
 
 ## 3-minute welcome tour
 

@@ -276,7 +276,12 @@ class ClaudiaLedgerTests(unittest.TestCase):
         self.assertTrue(BRAIN.exists())
         brain = BRAIN.read_text(encoding="utf-8")
         self.assertIn('"id": "J-0001"', brain)
-        self.assertIn("Alex Rivera", brain)
+        # Shipped Brain Page uses the live example cast (not the tiny CSV example).
+        self.assertIn("Sarah K.", brain)
+        self.assertIn("Mia C.", brain)
+        self.assertIn("const UPDATED", brain)
+        self.assertIn("const COVERAGE", brain)
+        self.assertIn("no contact logged", brain)
 
 
 if __name__ == "__main__":

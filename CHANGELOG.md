@@ -15,7 +15,12 @@ Smoke-test fixes for identical bot copies:
 - Renderer: without `--data`, no stand-in text unless `--demo`; meditate never invents "Clean day"
 - Scratch paths use `$CLAUDIA_HOME/work/`
 - Full short `welcome_tour` (promises, brief, meditate, weekly, Brain, approval rules)
-- Brain coverage strip + "Last updated"; export/build accept `--coverage` / work/coverage.json
+- Ship the live Claudia's Brain Page design (example data) plus real Page screenshots in README
+- Brain `UPDATED` / `COVERAGE` sit below the data end marker; build-brain only rewrites the data block
+- Optional `coverage` from `--coverage` / work/coverage.json / owner.json (omitted when unset)
+- Never-contacted people export `days_since: -1` (Page shows "no contact logged")
+- Promise directions include `Claudia owes` and `bot owes`
+- `export-brain` / `build-brain` are read-only against ledger CSVs
 - `forget` on unknown id exits non-zero with no log row
 - Install recipe in FOR-BOTS; first_run refreshes tools quietly; updates only on VERSION bumps
 

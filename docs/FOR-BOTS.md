@@ -210,7 +210,7 @@ python3 "$L" "${H[@]}" build-brain \
 # Or: --coverage "scanned email, calendar, chat; through 2026-10-24"
 ```
 
-Expected: `CHECK OK`, then a canvas with ledger JSON between the LEDGER-DATA markers, a coverage strip, and "Last updated" (not "generated"). Publish in place to the Brain Page id.
+Expected: `CHECK OK`, then a canvas with ledger JSON between the LEDGER-DATA markers. The Page keeps `UPDATED` / `COVERAGE` just below the end marker (Last updated from the ledger date; coverage from your file, or the example note). Publish in place to the Brain Page id. `export-brain` and `build-brain` are read-only against the ledger CSVs.
 
 ### Failure
 
@@ -348,7 +348,9 @@ Never invent a replacement Page design when the hosted file fails.
 - **Interaction IDs use `I-######` (6 digits)**; log ids use `L-######`; merge ids use `M-####`.
 - **Actors are `owner` / `them` / `claudia` / `both`**.
 - **Brain JSON people fields:** `id, name, org_id, role, network, relationship, cadence_days, last_contact, days_since, health, city, how_met`.
-- **`days_since` and `health` are recomputed** on export.
-- **Brain JSON also carries `coverage`** (sources scanned and through what date) and shows **Last updated** from `generated`.
+- **`days_since` and `health` are recomputed in memory on export** (export does not write CSVs). No contact uses `days_since: -1` so the Page shows "no contact logged".
+- **Optional `coverage`** (sources Claudia can and cannot see) is emitted only when configured via `--coverage`, `work/coverage.json`, or `owner.json`; otherwise omitted and the Page falls back to its example note.
+- **Last updated** comes from `generated`, via the `UPDATED` constant kept below the data end marker.
+- **Promise directions:** `I owe`, `owed to me`, `Claudia owes`, `bot owes`.
 - **Owner hub id is always `ME`**; display name comes from `owner.json` or `--owner`.
 - **Open commitments require a due date.** There is no flag to skip due dates.

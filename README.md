@@ -62,7 +62,7 @@ This repository is the **hosted backend** every installed Claudia downloads and 
 
 | Path | Purpose |
 |------|---------|
-| `ledger/claudia_ledger.py` | Stdlib CLI: init, add/update, close, merge, forget, backups/restore, check, export-brain, build-brain |
+| `ledger/claudia_ledger.py` | Stdlib CLI: init, add/update (incl. commitment), close, merge, forget, health snapshot, backups/restore, check, export-brain, build-brain |
 | `scan/claudia_scan.py` | Propose commitment candidates from normalized JSONL (bot judges and records) |
 | `templates/` | Message shells + renderer for morning brief, catch, meditate, weekly review, welcome |
 | `update/claudia_update.py` | Version check, MANIFEST.sha256 verify, atomic self-update |
@@ -87,9 +87,11 @@ python3 -m unittest discover -s scan -p 'test_*.py' -v
 python3 -m unittest discover -s update -p 'test_*.py' -v
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 python3 evals/run_eval.py
-export CLAUDIA_HOME=/tmp/claudia-demo CLAUDIA_BOT_ID=demo
+export CLAUDIA_HOME="${TMPDIR:-/tmp}/claudia-demo" CLAUDIA_BOT_ID=demo
 bash setup/first_run.sh --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID"
 ```
+
+Installed bots keep scratch files under `$CLAUDIA_HOME/work/` (not a shared hard-coded temp path).
 
 ## Maintainers
 

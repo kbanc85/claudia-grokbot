@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Made with Grok Bot.
-"""Claudia Ledger — CSV ledger + Brain Page export for Grok Bot copies.
+"""Claudia Ledger: CSV ledger + Brain Page export for Grok Bot copies.
 
 Python 3 standard library only. The bot is the operator of this tool.
 
@@ -120,6 +120,33 @@ ID_SPECS: dict[str, tuple[str, str, int]] = {
     LOG: ("log_id", "L-", 6),
     MERGES: ("merge_id", "M-", 4),
 }
+
+# owner.json id_counters keys (never reuse an issued id)
+ID_COUNTER_KEYS: dict[str, str] = {
+    PEOPLE: "P",
+    ORGS: "O",
+    PROJECTS: "J",
+    COMMITMENTS: "C",
+    INTERACTIONS: "I",
+    LOG: "L",
+    MERGES: "M",
+}
+
+# Commands that change ledger files (require --bot-id / CLAUDIA_BOT_ID).
+WRITE_COMMANDS = frozenset(
+    {
+        "init",
+        "add",
+        "update",
+        "close",
+        "merge",
+        "forget",
+        "restore",
+        "health",
+        "export-brain",
+        "build-brain",
+    }
+)
 
 DIRECTIONS = ("I owe", "owed to me", "Claudia owes", "bot owes")
 COMMIT_STATUSES = ("open", "done", "dropped", "renegotiated")
@@ -256,6 +283,10 @@ def home_ledger_dir(home: Path) -> Path:
 
 def home_tools_dir(home: Path) -> Path:
     return home / "tools"
+
+
+def home_work_dir(home: Path) -> Path:
+    return home / "work"
 
 
 def load_owner_json(ledger: Path) -> dict[str, Any]:
@@ -439,16 +470,99 @@ def cmd_restore(args: argparse.Namespace) -> int:
     return 0
 
 
-def next_id(rows: Sequence[Mapping[str, str]], col: str, prefix: str, width: int) -> str:
+def _parse_prefixed_num(val: str, prefix: str) -> int | None:
+    if not val or not val.startswith(prefix):
+        return None
+    rest = val[len(prefix) :]
+    if rest.isdigit():
+        return int(rest)
+    return None
+
+
+def _scan_text_for_prefix(text: str, prefix: str) -> int:
+    """Highest numeric suffix for prefix in free text (aliases, log detail, etc.)."""
+    if not text or prefix not in text:
+        return 0
     highest = 0
-    for row in rows:
-        val = row.get(col, "")
-        if not val.startswith(prefix):
+    for match in re.finditer(re.escape(prefix) + r"(\d+)", text):
+        highest = max(highest, int(match.group(1)))
+    return highest
+
+
+def max_issued_for(ledger: Path, filename: str) -> int:
+    """Max id ever issued for this entity type.
+
+    Robust for existing ledgers: scans the live CSV, people aliases (retired
+    person ids after merge), merges.csv, claudia_log.csv, and owner.json
+    id_counters. IDs are never reused after merge or forget.
+    """
+    col, prefix, _width = ID_SPECS[filename]
+    key = ID_COUNTER_KEYS[filename]
+    highest = 0
+    owner = load_owner_json(ledger)
+    counters = owner.get("id_counters")
+    if isinstance(counters, dict):
+        raw = counters.get(key)
+        try:
+            if raw is not None:
+                highest = max(highest, int(raw))
+        except (TypeError, ValueError):
+            pass
+    path = ledger / filename
+    if path.is_file():
+        try:
+            for row in read_rows(ledger, filename):
+                n = _parse_prefixed_num(row.get(col, ""), prefix)
+                if n is not None:
+                    highest = max(highest, n)
+                for v in row.values():
+                    highest = max(highest, _scan_text_for_prefix(v, prefix))
+        except LedgerError:
+            pass
+    # Retired person ids live in aliases after merge; always scan people aliases
+    # when allocating a person id.
+    if filename == PEOPLE and (ledger / PEOPLE).is_file():
+        try:
+            for row in read_rows(ledger, PEOPLE):
+                highest = max(
+                    highest, _scan_text_for_prefix(row.get("aliases", ""), prefix)
+                )
+        except LedgerError:
+            pass
+    for extra in (MERGES, LOG):
+        if extra == filename:
             continue
-        rest = val[len(prefix) :]
-        if rest.isdigit():
-            highest = max(highest, int(rest))
-    return f"{prefix}{highest + 1:0{width}d}"
+        if not (ledger / extra).is_file():
+            continue
+        try:
+            for row in read_rows(ledger, extra):
+                for v in row.values():
+                    highest = max(highest, _scan_text_for_prefix(v, prefix))
+        except LedgerError:
+            pass
+    return highest
+
+
+def allocate_id(ledger: Path, filename: str) -> str:
+    """Next unused id for filename. Never reuses a past id. Updates id_counters."""
+    _col, prefix, width = ID_SPECS[filename]
+    key = ID_COUNTER_KEYS[filename]
+    nxt = max_issued_for(ledger, filename) + 1
+    data = load_owner_json(ledger)
+    counters: dict[str, Any]
+    raw_counters = data.get("id_counters")
+    if isinstance(raw_counters, dict):
+        counters = dict(raw_counters)
+    else:
+        counters = {}
+    try:
+        prev = int(counters.get(key) or 0)
+    except (TypeError, ValueError):
+        prev = 0
+    counters[key] = max(prev, nxt)
+    data["id_counters"] = counters
+    write_owner_json(ledger, data)
+    return f"{prefix}{nxt:0{width}d}"
 
 
 def append_log(
@@ -459,10 +573,9 @@ def append_log(
     approved: str = "yes",
 ) -> None:
     rows = read_rows(ledger, LOG) if (ledger / LOG).exists() else []
-    col, prefix, width = ID_SPECS[LOG]
     rows.append(
         {
-            "log_id": next_id(rows, col, prefix, width),
+            "log_id": allocate_id(ledger, LOG),
             "timestamp": ts_iso(),
             "action": action,
             "ref": ref,
@@ -471,6 +584,64 @@ def append_log(
         }
     )
     write_rows(ledger, LOG, rows)
+
+
+def append_health_history(
+    ledger: Path,
+    *,
+    person_id: str,
+    health: str,
+    last_contact: str,
+    days_since: str,
+    cadence_days: str,
+    reason: str,
+    source: str = "",
+) -> None:
+    """Append one health_history.csv row (caller handles backup)."""
+    rows = read_rows(ledger, HEALTH) if (ledger / HEALTH).exists() else []
+    rows.append(
+        {
+            "date": today_iso(),
+            "person_id": person_id,
+            "health": health,
+            "last_contact": last_contact,
+            "days_since": days_since,
+            "cadence_days": cadence_days,
+            "reason": reason,
+            "source": source,
+        }
+    )
+    write_rows(ledger, HEALTH, rows)
+
+
+def record_health_change_if_needed(
+    ledger: Path,
+    person: Mapping[str, str],
+    old_health: str,
+    *,
+    source: str = "",
+) -> None:
+    """When a write changes a person's health, append reason=changed."""
+    new_health = (person.get("health") or "").strip()
+    if not new_health or new_health == (old_health or "").strip():
+        return
+    lc = person.get("last_contact") or ""
+    cadence = person.get("cadence_days") or str(DEFAULT_CADENCE)
+    ds = ""
+    if lc:
+        delta = day_diff(today_iso(), lc)
+        if delta is not None:
+            ds = str(delta)
+    append_health_history(
+        ledger,
+        person_id=person["person_id"],
+        health=new_health,
+        last_contact=lc,
+        days_since=ds,
+        cadence_days=str(cadence),
+        reason="changed",
+        source=source,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -605,7 +776,7 @@ def find_person_dupes(
             if org_id and r["org_id"] == org_id:
                 hits.append(f"{r['person_id']} (same name + org)")
             else:
-                hits.append(f"{r['person_id']} (same name — ambiguous)")
+                hits.append(f"{r['person_id']} (same name: ambiguous)")
     return hits
 
 
@@ -649,7 +820,8 @@ def cmd_add_person(args: argparse.Namespace) -> int:
     if cadence_source not in CADENCE_SOURCES:
         die(f"cadence_source must be one of {', '.join(CADENCE_SOURCES)}")
     today = today_iso()
-    pid = next_id(rows, *ID_SPECS[PEOPLE])
+    backup_ledger(ledger)
+    pid = allocate_id(ledger, PEOPLE)
     notes_pointer = f"notes/{pid}.md"
     row = {
         "person_id": pid,
@@ -678,7 +850,6 @@ def cmd_add_person(args: argparse.Namespace) -> int:
     if row["last_contact"]:
         ds = day_diff(today, row["last_contact"])
         row["health"] = compute_health(ds, cadence)
-    backup_ledger(ledger)
     rows.append(row)
     write_rows(ledger, PEOPLE, rows)
     np = ledger / notes_pointer
@@ -687,6 +858,22 @@ def cmd_add_person(args: argparse.Namespace) -> int:
         np.write_text(
             f"# Notes for {name} ({pid})\n\n# Made with Grok Bot.\n",
             encoding="utf-8",
+        )
+    if row["health"]:
+        ds_s = ""
+        if row["last_contact"]:
+            delta = day_diff(today, row["last_contact"])
+            if delta is not None:
+                ds_s = str(delta)
+        append_health_history(
+            ledger,
+            person_id=pid,
+            health=row["health"],
+            last_contact=row["last_contact"],
+            days_since=ds_s,
+            cadence_days=str(cadence),
+            reason="changed",
+            source="add_person",
         )
     append_log(ledger, "add_person", pid, f"Added person {name}")
     print(f"Added {pid}: {name}")
@@ -705,14 +892,14 @@ def cmd_add_org(args: argparse.Namespace) -> int:
                 f"org with same name already exists: {r['org_id']} ({r['name']}). "
                 "Pass --force-new if this is a different org."
             )
-    oid = next_id(rows, *ID_SPECS[ORGS])
+    backup_ledger(ledger)
+    oid = allocate_id(ledger, ORGS)
     row = {
         "org_id": oid,
         "name": name,
         "aliases": (args.aliases or "").strip(),
         "domains": (args.domains or "").strip(),
     }
-    backup_ledger(ledger)
     rows.append(row)
     write_rows(ledger, ORGS, rows)
     append_log(ledger, "add_org", oid, f"Added org {name}")
@@ -732,7 +919,8 @@ def cmd_add_project(args: argparse.Namespace) -> int:
     status = (args.status or "active").strip()
     if status not in PROJECT_STATUSES:
         die(f"status must be one of {', '.join(PROJECT_STATUSES)}")
-    jid = next_id(rows, *ID_SPECS[PROJECTS])
+    backup_ledger(ledger)
+    jid = allocate_id(ledger, PROJECTS)
     row = {
         "project_id": jid,
         "name": name,
@@ -740,7 +928,6 @@ def cmd_add_project(args: argparse.Namespace) -> int:
         "org_id": org_id,
         "status": status,
     }
-    backup_ledger(ledger)
     rows.append(row)
     write_rows(ledger, PROJECTS, rows)
     append_log(ledger, "add_project", jid, f"Added project {name}")
@@ -761,17 +948,19 @@ def cmd_add_commitment(args: argparse.Namespace) -> int:
     if not what:
         die("what is required")
     due = (args.due or "").strip()
-    require_iso_date("due", due, allow_empty=True)
-    if not due and not args.allow_no_due:
-        die("due date missing. Ask the owner once, or pass --allow-no-due.")
-    source_link = (args.source_link or "").strip()
-    if not source_link:
-        die("source_link is required (explicit promise provenance)")
     status = (args.status or "open").strip()
     if status not in COMMIT_STATUSES:
         die(f"status must be one of {', '.join(COMMIT_STATUSES)}")
+    if status == "open":
+        require_iso_date("due", due, allow_empty=False)
+    else:
+        require_iso_date("due", due, allow_empty=True)
+    source_link = (args.source_link or "").strip()
+    if not source_link:
+        die("source_link is required (explicit promise provenance)")
     today = today_iso()
-    cid = next_id(rows, *ID_SPECS[COMMITMENTS])
+    backup_ledger(ledger)
+    cid = allocate_id(ledger, COMMITMENTS)
     row = {
         "commit_id": cid,
         "direction": direction,
@@ -783,13 +972,12 @@ def cmd_add_commitment(args: argparse.Namespace) -> int:
         "created": today,
         "closed": "" if status == "open" else today,
     }
-    backup_ledger(ledger)
     rows.append(row)
     write_rows(ledger, COMMITMENTS, rows)
     append_log(ledger, "add_commitment", cid, f"{direction}: {what}")
     who = next(r["name"] for r in read_rows(ledger, PEOPLE) if r["person_id"] == person_id)
     due_bit = f" by {due}" if due else ""
-    print(f"Added {cid}: {direction} {who} — {what}{due_bit}.")
+    print(f"Added {cid}: {direction} {who}: {what}{due_bit}.")
     return 0
 
 
@@ -809,7 +997,8 @@ def cmd_add_interaction(args: argparse.Namespace) -> int:
     if not summary:
         die("summary is required")
     source_link = (args.source_link or "").strip()
-    iid = next_id(rows, *ID_SPECS[INTERACTIONS])
+    backup_ledger(ledger)
+    iid = allocate_id(ledger, INTERACTIONS)
     row = {
         "int_id": iid,
         "date": when,
@@ -819,7 +1008,6 @@ def cmd_add_interaction(args: argparse.Namespace) -> int:
         "summary": summary,
         "source_link": source_link,
     }
-    backup_ledger(ledger)
     rows.append(row)
     write_rows(ledger, INTERACTIONS, rows)
     # refresh last_contact / health when actor is owner/them/both
@@ -828,6 +1016,7 @@ def cmd_add_interaction(args: argparse.Namespace) -> int:
         for p in people:
             if p["person_id"] != person_id:
                 continue
+            old_health = p["health"]
             prev = p["last_contact"]
             if not prev or when >= prev:
                 p["last_contact"] = when
@@ -835,9 +1024,13 @@ def cmd_add_interaction(args: argparse.Namespace) -> int:
                 ds = day_diff(today_iso(), when)
                 p["health"] = compute_health(ds, cadence)
                 p["updated"] = today_iso()
-        write_rows(ledger, PEOPLE, people)
+                write_rows(ledger, PEOPLE, people)
+                record_health_change_if_needed(
+                    ledger, p, old_health, source=f"interaction:{iid}"
+                )
+            break
     append_log(ledger, "add_interaction", iid, summary)
-    print(f"Added {iid}: {when} with {person_id} — {summary}")
+    print(f"Added {iid}: {when} with {person_id}: {summary}")
     return 0
 
 
@@ -891,10 +1084,14 @@ def _update_row(
 ) -> int:
     rows = read_rows(ledger, filename)
     found = False
+    old_health = ""
+    updated_person: dict[str, str] | None = None
     for r in rows:
         if r[id_col] != entity_id:
             continue
         found = True
+        if filename == PEOPLE:
+            old_health = r.get("health", "")
         for k, v in updates.items():
             if k not in r:
                 die(f"unknown field {k} for {filename}")
@@ -903,11 +1100,25 @@ def _update_row(
             r[k] = v
         if "updated" in r:
             r["updated"] = today_iso()
+        # Recompute health when last_contact or cadence changes and health was
+        # not set explicitly.
+        if filename == PEOPLE and "health" not in updates:
+            if "last_contact" in updates or "cadence_days" in updates:
+                cadence = int(r.get("cadence_days") or DEFAULT_CADENCE)
+                lc = r.get("last_contact") or ""
+                ds = day_diff(today_iso(), lc) if lc else None
+                r["health"] = compute_health(ds, cadence)
+        if filename == PEOPLE:
+            updated_person = r
         break
     if not found:
         die(f"{entity_id} not found in {filename}")
     backup_ledger(ledger)
     write_rows(ledger, filename, rows)
+    if updated_person is not None:
+        record_health_change_if_needed(
+            ledger, updated_person, old_health, source="update_person"
+        )
     append_log(ledger, action, entity_id, json.dumps(updates, ensure_ascii=False))
     print(f"Updated {entity_id}")
     return 0
@@ -944,6 +1155,8 @@ def cmd_update_person(args: argparse.Namespace) -> int:
         require_iso_date("last_contact", updates["last_contact"], allow_empty=True)
     if "cadence_source" in updates and updates["cadence_source"] not in CADENCE_SOURCES:
         die(f"cadence_source must be one of {', '.join(CADENCE_SOURCES)}")
+    if "health" in updates and updates["health"] and updates["health"] not in HEALTH_VALUES:
+        die(f"health must be one of {', '.join(HEALTH_VALUES)}")
     if not updates:
         die("nothing to update; pass at least one field")
     return _update_row(ledger, PEOPLE, "person_id", args.id, updates, "update_person")
@@ -977,6 +1190,56 @@ def cmd_update_project(args: argparse.Namespace) -> int:
     return _update_row(ledger, PROJECTS, "project_id", args.id, updates, "update_project")
 
 
+def cmd_update_commitment(args: argparse.Namespace) -> int:
+    """Update open-promise fields. Use close for status changes."""
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    updates: dict[str, str] = {}
+    if args.due is not None:
+        updates["due"] = str(args.due).strip()
+    if args.what is not None:
+        updates["what"] = str(args.what).strip()
+    if args.person_id is not None:
+        updates["person_id"] = str(args.person_id).strip()
+    if args.source_link is not None:
+        updates["source_link"] = str(args.source_link).strip()
+    if not updates:
+        die("nothing to update; pass --due, --what, --person-id, and/or --source-link")
+    rows = read_rows(ledger, COMMITMENTS)
+    found = False
+    for r in rows:
+        if r["commit_id"] != args.id:
+            continue
+        found = True
+        if "person_id" in updates:
+            if updates["person_id"] not in person_ids(ledger):
+                die(f"person_id {updates['person_id']} not found")
+        if "what" in updates and not updates["what"]:
+            die("what cannot be empty")
+        if "source_link" in updates and not updates["source_link"]:
+            die("source_link cannot be empty")
+        if "due" in updates:
+            status = r["status"]
+            if status == "open":
+                require_iso_date("due", updates["due"], allow_empty=False)
+            else:
+                require_iso_date("due", updates["due"], allow_empty=True)
+        for k, v in updates.items():
+            r[k] = v
+        # Open commitments must keep a due date after any update.
+        if r["status"] == "open" and not r["due"]:
+            die("due date missing. Ask the owner once; open promises need a due date.")
+        break
+    if not found:
+        die(f"{args.id} not found in commitments.csv")
+    backup_ledger(ledger)
+    write_rows(ledger, COMMITMENTS, rows)
+    append_log(
+        ledger, "update_commitment", args.id, json.dumps(updates, ensure_ascii=False)
+    )
+    print(f"Updated {args.id}")
+    return 0
+
+
 def cmd_close(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
     status = args.status.strip()
@@ -997,6 +1260,52 @@ def cmd_close(args: argparse.Namespace) -> int:
     write_rows(ledger, COMMITMENTS, rows)
     append_log(ledger, "close_commitment", args.id, status)
     print(f"Closed {args.id} as {status}")
+    return 0
+
+
+def cmd_health_snapshot(args: argparse.Namespace) -> int:
+    """Append weekly health_history rows for every person."""
+    ledger = ensure_ledger_dir(Path(args.ledger))
+    people = read_rows(ledger, PEOPLE)
+    if not people:
+        print("no people to snapshot")
+        return 0
+    today = today_iso()
+    backup_ledger(ledger)
+    # Refresh derived health, then write one weekly row per person.
+    old_health_by_id: dict[str, str] = {}
+    for p in people:
+        old_health_by_id[p["person_id"]] = p.get("health", "")
+        cadence = int(p.get("cadence_days") or DEFAULT_CADENCE)
+        lc = p.get("last_contact") or ""
+        ds = day_diff(today, lc) if lc else None
+        p["health"] = compute_health(ds, cadence)
+        if p["health"] != old_health_by_id[p["person_id"]]:
+            p["updated"] = today
+    write_rows(ledger, PEOPLE, people)
+    for p in people:
+        lc = p.get("last_contact") or ""
+        ds = day_diff(today, lc) if lc else None
+        ds_s = "" if ds is None else str(ds)
+        cadence_s = str(p.get("cadence_days") or DEFAULT_CADENCE)
+        append_health_history(
+            ledger,
+            person_id=p["person_id"],
+            health=p["health"],
+            last_contact=lc,
+            days_since=ds_s,
+            cadence_days=cadence_s,
+            reason="weekly",
+            source="health snapshot",
+        )
+        record_health_change_if_needed(
+            ledger,
+            p,
+            old_health_by_id.get(p["person_id"], ""),
+            source="health snapshot",
+        )
+    append_log(ledger, "health_snapshot", today, f"weekly rows for {len(people)} people")
+    print(f"Wrote weekly health snapshot for {len(people)} people.")
     return 0
 
 
@@ -1096,7 +1405,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
         merge_notes.unlink()
 
     merges = read_rows(ledger, MERGES)
-    mid = next_id(merges, *ID_SPECS[MERGES])
+    mid = allocate_id(ledger, MERGES)
     merges.append(
         {
             "merge_id": mid,
@@ -1120,11 +1429,29 @@ def cmd_merge(args: argparse.Namespace) -> int:
     return 0
 
 
+def _forget_target_exists(ledger: Path, target: str) -> bool:
+    if target.startswith("P-"):
+        return target in person_ids(ledger)
+    if target.startswith("O-"):
+        return target in org_ids(ledger)
+    if target.startswith("J-"):
+        return target in project_ids(ledger)
+    if target.startswith("C-"):
+        return any(r["commit_id"] == target for r in read_rows(ledger, COMMITMENTS))
+    if target.startswith("I-"):
+        return any(r["int_id"] == target for r in read_rows(ledger, INTERACTIONS))
+    return False
+
+
 def cmd_forget(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
     target = args.id.strip()
     if not args.yes:
         die("forget permanently deletes data. Pass --yes after the owner confirms.")
+    if not target.startswith(("P-", "O-", "J-", "C-", "I-")):
+        die(f"do not know how to forget id {target!r} (expected P-/O-/J-/C-/I-)")
+    if not _forget_target_exists(ledger, target):
+        die(f"nothing matches {target}. No rows deleted.")
     backup_ledger(ledger)
     removed: list[str] = []
 
@@ -1167,8 +1494,6 @@ def cmd_forget(args: argparse.Namespace) -> int:
         drop(COMMITMENTS, lambda r: r["commit_id"] == target)
     elif target.startswith("I-"):
         drop(INTERACTIONS, lambda r: r["int_id"] == target)
-    else:
-        die(f"do not know how to forget id {target!r} (expected P-/O-/J-/C-/I-)")
 
     # scrub backups of matching content? Spec says mirror and backups included.
     # We remove matching rows from backup CSV copies under backups/.
@@ -1238,19 +1563,73 @@ def refresh_person_derived(people: list[dict[str, str]], generated: str) -> None
         p["health"] = compute_health(ds, cadence)
 
 
+def load_coverage_text(
+    home: Path | None,
+    *,
+    coverage_arg: str | None = None,
+    coverage_file: str | None = None,
+) -> str:
+    """Coverage strip text from --coverage, a JSON/text file, or work/coverage.json."""
+    if coverage_arg is not None and str(coverage_arg).strip():
+        return str(coverage_arg).strip()
+    candidates: list[Path] = []
+    if coverage_file:
+        candidates.append(Path(coverage_file).expanduser().resolve())
+    if home is not None:
+        candidates.append(home_work_dir(home) / "coverage.json")
+        candidates.append(home_work_dir(home) / "coverage.txt")
+    for path in candidates:
+        if not path.is_file():
+            continue
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw:
+            continue
+        if path.suffix.lower() == ".json":
+            try:
+                obj = json.loads(raw)
+            except json.JSONDecodeError:
+                return raw
+            if isinstance(obj, str):
+                return obj.strip()
+            if isinstance(obj, dict):
+                if obj.get("text"):
+                    return str(obj["text"]).strip()
+                # Common shape: {sources: [...], through: "YYYY-MM-DD"}
+                sources = obj.get("sources") or obj.get("scanned")
+                through = obj.get("through") or obj.get("through_date") or obj.get("until")
+                bits: list[str] = []
+                if isinstance(sources, (list, tuple)):
+                    bits.append("scanned " + ", ".join(str(s) for s in sources))
+                elif sources:
+                    bits.append(f"scanned {sources}")
+                if through:
+                    bits.append(f"through {through}")
+                if bits:
+                    return "; ".join(bits)
+                return json.dumps(obj, ensure_ascii=False)
+            return raw
+        return raw
+    return ""
+
+
 def export_brain_obj(
     ledger: Path,
     *,
     owner_name: str,
     example: bool,
     generated: str | None = None,
+    coverage: str = "",
 ) -> dict[str, Any]:
     generated = generated or today_iso()
     people_rows = read_rows(ledger, PEOPLE)
+    old_health = {r["person_id"]: r.get("health", "") for r in people_rows}
     refresh_person_derived(people_rows, generated)
-    # persist refreshed health (without backup spam — export is read-mostly;
-    # still write so CSV stays consistent with Brain)
+    # Persist refreshed health so CSV stays consistent with Brain.
     write_rows(ledger, PEOPLE, people_rows)
+    for r in people_rows:
+        record_health_change_if_needed(
+            ledger, r, old_health.get(r["person_id"], ""), source="export-brain"
+        )
 
     people: list[dict[str, Any]] = []
     for r in people_rows:
@@ -1322,6 +1701,7 @@ def export_brain_obj(
     return {
         "generated": generated,
         "example": bool(example),
+        "coverage": coverage or "",
         "owner": {"name": owner_name},
         "people": people,
         "orgs": orgs,
@@ -1334,11 +1714,18 @@ def export_brain_obj(
 
 def cmd_export_brain(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
+    home = getattr(args, "home_path", None)
+    coverage = load_coverage_text(
+        home,
+        coverage_arg=getattr(args, "coverage", None),
+        coverage_file=getattr(args, "coverage_file", None),
+    )
     obj = export_brain_obj(
         ledger,
         owner_name=load_owner_name(ledger, args.owner),
         example=bool(args.example),
         generated=args.generated,
+        coverage=coverage,
     )
     text = json.dumps(obj, ensure_ascii=False, indent=2) + "\n"
     if args.output:
@@ -1388,6 +1775,11 @@ def cmd_build_brain(args: argparse.Namespace) -> int:
     ledger = ensure_ledger_dir(Path(args.ledger))
     home = getattr(args, "home_path", None)
     template_src = args.template or default_brain_template(home)
+    coverage = load_coverage_text(
+        home,
+        coverage_arg=getattr(args, "coverage", None),
+        coverage_file=getattr(args, "coverage_file", None),
+    )
     try:
         template = fetch_text(template_src)
         obj = export_brain_obj(
@@ -1395,6 +1787,7 @@ def cmd_build_brain(args: argparse.Namespace) -> int:
             owner_name=load_owner_name(ledger, args.owner),
             example=bool(args.example),
             generated=args.generated,
+            coverage=coverage,
         )
         out = inject_ledger(template, obj)
     except LedgerError as e:
@@ -1535,7 +1928,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
         if r["status"] == "open" and not r["due"]:
             problems.append(
-                f"Commitment {r['commit_id']} is open but has no due date — ask the owner once."
+                f"Commitment {r['commit_id']} is open but has no due date: ask the owner once."
             )
         if r["status"] == "open" and r["due"] and r["due"] < today:
             warnings.append(
@@ -1591,7 +1984,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     for name, ids in by_name.items():
         if len(ids) > 1:
             warnings.append(
-                f"Duplicate display name {name!r} on {', '.join(ids)} — "
+                f"Duplicate display name {name!r} on {', '.join(ids)}: "
                 "use a qualifier like 'Sarah K. (Acme)' when talking about them."
             )
 
@@ -1631,11 +2024,14 @@ examples:
   python3 claudia_ledger.py --home "$CLAUDIA_HOME" add person --name "Alex Rivera" --org-id O-0001
   python3 claudia_ledger.py --home "$CLAUDIA_HOME" add commitment --direction "I owe" --person-id P-0001 \\
       --what "Send deck" --due 2026-10-25 --source-link chat:2026-10-24
-  python3 claudia_ledger.py --home "$CLAUDIA_HOME" close --id C-0001 --status done
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID" close --id C-0001 --status done
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID" update commitment --id C-0001 --due 2026-10-28
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID" health snapshot
   python3 claudia_ledger.py --home "$CLAUDIA_HOME" backups
-  python3 claudia_ledger.py --home "$CLAUDIA_HOME" restore 20261024T120000Z
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID" restore 20261024T120000Z
   python3 claudia_ledger.py --home "$CLAUDIA_HOME" check
-  python3 claudia_ledger.py --home "$CLAUDIA_HOME" build-brain -o /tmp/claudia-brain-ready.canvas.tsx
+  python3 claudia_ledger.py --home "$CLAUDIA_HOME" --bot-id "$CLAUDIA_BOT_ID" build-brain \\
+      -o "$CLAUDIA_HOME/claudia-brain-ready.canvas.tsx"
 """.strip(),
     )
     p.add_argument(
@@ -1724,14 +2120,13 @@ examples:
     ac.add_argument("--direction", required=True, choices=DIRECTIONS)
     ac.add_argument("--person-id", dest="person_id", required=True)
     ac.add_argument("--what", required=True)
-    ac.add_argument("--due", default="")
+    ac.add_argument(
+        "--due",
+        default="",
+        help="Due date YYYY-MM-DD (required for open commitments)",
+    )
     ac.add_argument("--status", default="open", choices=COMMIT_STATUSES)
     ac.add_argument("--source-link", dest="source_link", required=True)
-    ac.add_argument(
-        "--allow-no-due",
-        action="store_true",
-        help="Allow creating an open promise with no due date",
-    )
     ac.set_defaults(func=cmd_add_commitment)
 
     ai = add_sub.add_parser("interaction", help="Add an interaction (assigns next I-######)")
@@ -1753,7 +2148,9 @@ examples:
     al.set_defaults(func=cmd_add_link)
 
     # update
-    p_upd = sub.add_parser("update", help="Update fields on a person, org, or project")
+    p_upd = sub.add_parser(
+        "update", help="Update fields on a person, org, project, or commitment"
+    )
     upd_sub = p_upd.add_subparsers(dest="entity", required=True)
 
     up = upd_sub.add_parser("person")
@@ -1790,6 +2187,28 @@ examples:
     uj.add_argument("--org-id", dest="org_id")
     uj.add_argument("--status")
     uj.set_defaults(func=cmd_update_project)
+
+    uc = upd_sub.add_parser(
+        "commitment",
+        help="Update due/what/person/source_link (use close for status)",
+    )
+    uc.add_argument("--id", required=True)
+    uc.add_argument("--due", default=None)
+    uc.add_argument("--what", default=None)
+    uc.add_argument("--person-id", dest="person_id", default=None)
+    uc.add_argument("--source-link", dest="source_link", default=None)
+    uc.set_defaults(func=cmd_update_commitment)
+
+    p_health = sub.add_parser(
+        "health",
+        help="Relationship health history helpers",
+    )
+    health_sub = p_health.add_subparsers(dest="health_cmd", required=True)
+    p_snap = health_sub.add_parser(
+        "snapshot",
+        help="Append weekly health_history rows for every person",
+    )
+    p_snap.set_defaults(func=cmd_health_snapshot)
 
     p_close = sub.add_parser("close", help="Change a commitment status (done/dropped/renegotiated)")
     p_close.add_argument("--id", required=True)
@@ -1836,7 +2255,17 @@ examples:
     )
     p_exp.add_argument(
         "--generated",
-        help="Override generated date (YYYY-MM-DD); default today UTC",
+        help="Override last-updated date (YYYY-MM-DD); default today UTC",
+    )
+    p_exp.add_argument(
+        "--coverage",
+        default=None,
+        help="Coverage strip text (sources scanned and through what date)",
+    )
+    p_exp.add_argument(
+        "--coverage-file",
+        default=None,
+        help="Path to coverage.json or .txt (default: $CLAUDIA_HOME/work/coverage.json)",
     )
     p_exp.set_defaults(func=cmd_export_brain)
 
@@ -1860,7 +2289,17 @@ examples:
     )
     p_build.add_argument("--owner", help="Owner display name")
     p_build.add_argument("--example", action="store_true")
-    p_build.add_argument("--generated", help="Override generated date (YYYY-MM-DD)")
+    p_build.add_argument("--generated", help="Override last-updated date (YYYY-MM-DD)")
+    p_build.add_argument(
+        "--coverage",
+        default=None,
+        help="Coverage strip text (sources scanned and through what date)",
+    )
+    p_build.add_argument(
+        "--coverage-file",
+        default=None,
+        help="Path to coverage.json or .txt (default: $CLAUDIA_HOME/work/coverage.json)",
+    )
     p_build.set_defaults(func=cmd_build_brain)
 
     p_backups = sub.add_parser(
@@ -1896,11 +2335,21 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args.ledger = str(home_ledger_dir(home))
 
-    bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=False)
+    needs_bot = args.command in WRITE_COMMANDS
+    bot_id = resolve_bot_id(getattr(args, "bot_id", None), required=needs_bot)
     args.bot_id = bot_id or None
-    # Refuse writes into another bot's ledger when a bot_id is available.
-    if args.command != "init" and bot_id and Path(args.ledger).exists():
+    # Refuse writes into another bot's ledger. Mismatch always blocks.
+    if needs_bot and args.command != "init" and bot_id and Path(args.ledger).exists():
         verify_bot_id(Path(args.ledger), bot_id, hard=True)
+    elif (
+        not needs_bot
+        and bot_id
+        and Path(args.ledger).exists()
+        and args.command == "check"
+    ):
+        # check reports mismatch as a problem inside cmd_check; still hard-block
+        # nothing here so the full report can list every issue.
+        pass
 
     try:
         return int(args.func(args))

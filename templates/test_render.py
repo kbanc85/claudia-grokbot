@@ -51,6 +51,7 @@ class RenderTests(unittest.TestCase):
             self.assertIn("Hi Sam", proc.stdout)
             self.assertIn("👋", proc.stdout)
             self.assertNotIn("{name}", proc.stdout)
+            self.assertIn("Chief of Staff", proc.stdout)
 
     def test_missing_placeholder_fails_loudly(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -69,6 +70,14 @@ class RenderTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("missing placeholders", proc.stderr)
 
+    def test_without_data_requires_demo(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            home.mkdir()
+            proc = run("--template", "promise_catch", home=home, check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("--data", proc.stderr)
+
     def test_missing_home_fails(self) -> None:
         proc = run(
             "--template",
@@ -84,9 +93,9 @@ class RenderTests(unittest.TestCase):
         for path in (ROOT / "templates").glob("*.txt"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("\u2014", text, path.name)
-            self.assertNotIn("—", text, path.name)
+            self.assertNotIn("\u2013", text, path.name)
 
-    def test_ledger_promise_catch(self) -> None:
+    def test_ledger_promise_catch_demo(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "home"
             subprocess.run(
@@ -145,7 +154,7 @@ class RenderTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            proc = run("--template", "promise_catch", home=home)
+            proc = run("--template", "promise_catch", "--demo", home=home)
             self.assertIn("1 promises", proc.stdout)
             self.assertIn("Send deck", proc.stdout)
 

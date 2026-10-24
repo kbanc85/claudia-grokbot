@@ -113,7 +113,9 @@ echo "tools:  ${TOOLS_DIR}"
 echo "ledger: ${LEDGER_DIR}"
 echo
 
-mkdir -p "${TOOLS_DIR}" "${LEDGER_DIR}" \
+WORK_DIR="${HOME_DIR}/work"
+
+mkdir -p "${TOOLS_DIR}" "${LEDGER_DIR}" "${WORK_DIR}" \
   "${TOOLS_DIR}/ledger/templates" \
   "${TOOLS_DIR}/templates" \
   "${TOOLS_DIR}/scan" \
@@ -126,9 +128,11 @@ mkdir -p "${TOOLS_DIR}" "${LEDGER_DIR}" \
   echo "Summary: ${oks} ok, ${problems} problem(s)."
   exit 1
 }
-say_ok "folders ready under ${HOME_DIR}"
+say_ok "folders ready under ${HOME_DIR} (tools, ledger, work)"
 
-# Download / refresh tool files (safe to re-run; tools are replaceable).
+# Download / refresh tool files (safe to re-run; always overwrite tools quietly).
+# Day-to-day updates for installed copies use claudia_update.py and only run
+# when VERSION bumps. first_run always refreshes the local tool copy.
 tool_files=(
   "VERSION"
   "CHANGELOG.md"
@@ -147,11 +151,13 @@ tool_files=(
   "docs/FOR-BOTS.md"
 )
 
+tool_fail=0
 for rel in "${tool_files[@]}"; do
   if copy_or_curl "$rel" "${TOOLS_DIR}/${rel}"; then
     :
   else
     say_problem "could not install ${rel}"
+    tool_fail=1
   fi
 done
 
@@ -160,6 +166,7 @@ for f in people organizations projects commitments interactions links claudia_lo
     :
   else
     say_problem "could not install ledger/templates/${f}.csv"
+    tool_fail=1
   fi
 done
 
@@ -170,14 +177,16 @@ chmod +x \
   "${TOOLS_DIR}/update/claudia_update.py" \
   "${TOOLS_DIR}/setup/first_run.sh" 2>/dev/null || true
 
-if [[ -f "${TOOLS_DIR}/ledger/claudia_ledger.py" ]]; then
-  say_ok "ledger tool installed"
+if [[ "$tool_fail" -eq 0 && -f "${TOOLS_DIR}/ledger/claudia_ledger.py" ]]; then
+  say_ok "tools refreshed under ${TOOLS_DIR}"
 else
-  say_problem "ledger tool missing"
+  if [[ ! -f "${TOOLS_DIR}/ledger/claudia_ledger.py" ]]; then
+    say_problem "ledger tool missing"
+  fi
 fi
 
 if [[ -f "${TOOLS_DIR}/brain/claudia-brain.canvas.tsx" ]]; then
-  say_ok "Brain template installed"
+  say_ok "Brain template ready"
 else
   say_problem "Brain template missing"
 fi

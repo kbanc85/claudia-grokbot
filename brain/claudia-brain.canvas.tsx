@@ -11,6 +11,7 @@ import type { PointerEvent, ReactNode } from "grok/canvas";
 const LEDGER: Ledger = {
   "generated": "2026-10-24",
   "example": true,
+  "coverage": "scanned email, calendar, chat; through 2026-10-24",
   "owner": {
     "name": "You"
   },
@@ -118,7 +119,7 @@ type Project = { id: string; name: string; org_id: string; status: string };
 type Link = { from_id: string; to_id: string; type: string; basis: string; source: string };
 type Commitment = { id: string; direction: string; person_id: string; what: string; due: string; status: string; source_link: string };
 type Interaction = { id: string; date: string; person_id: string; channel: string; actor: string; summary: string; source_link: string };
-type Ledger = { generated: string; example: boolean; owner?: { name: string }; people: Person[]; orgs: Org[]; projects: Project[]; links: Link[]; commitments: Commitment[]; interactions: Interaction[] };
+type Ledger = { generated: string; example: boolean; coverage?: string; owner?: { name: string }; people: Person[]; orgs: Org[]; projects: Project[]; links: Link[]; commitments: Commitment[]; interactions: Interaction[] };
 type Kind = "owner" | "person" | "org" | "project";
 type GEdge = { from_id: string; to_id: string; type: string; basis: string; kind: "link" | "owner" | "commit"; commit?: Commitment };
 type GNode = { id: string; label: string; kind: Kind; health: string | null; network: string | null; weight: number; x: number; y: number; r: number; ph: number };
@@ -1217,9 +1218,15 @@ export default function PeopleGraph() {
   return (
     <Page
       title="Claudia's Brain"
-      summary={LEDGER.example ? "Example data: every person, org and project here is made up. Yours is rebuilt from your Claudia Ledger." : `Built from your Claudia Ledger, generated ${LEDGER.generated}.`}
+      summary={LEDGER.example ? "Example data: every person, org and project here is made up. Yours is rebuilt from your Claudia Ledger." : `Built from your Claudia Ledger. Last updated ${LEDGER.generated}.`}
       width="full"
     >
+      {(LEDGER.coverage || LEDGER.generated) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", marginBottom: 10, fontSize: theme.font.caption.fontSize, color: theme.text.secondary }}>
+          <span>Last updated {LEDGER.generated}</span>
+          {LEDGER.coverage ? <span style={{ color: theme.text.tertiary }}>{"\u00b7"} Coverage: {LEDGER.coverage}</span> : null}
+        </div>
+      )}
       <div ref={rowRef} style={{ display: "flex", flexWrap: narrow ? "wrap" : "nowrap", gap: 14, alignItems: "stretch" }}>
         <div ref={stageRef} style={{ position: "relative", flex: "1 1 auto", width: narrow ? "100%" : undefined, minWidth: 0, aspectRatio: narrow ? "2 / 3" : "10 / 7", borderRadius: theme.radius.lg, overflow: "hidden", border: `1px solid ${theme.border.weak}` }}>
           <canvas

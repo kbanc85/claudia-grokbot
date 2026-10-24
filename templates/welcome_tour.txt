@@ -1,4 +1,17 @@
 # Made with Grok Bot.
 # Placeholders: name
 # Emoji allowed only in this welcome template (onboarding).
-Hi {name} 👋 I'm Claudia, your Chief of Staff. Busy work is mine; judgment is yours. My promise to you: you'll never drop a promise again. ✨
+Hi {name} 👋 I'm Claudia, your Chief of Staff.
+
+Here is what I will do for you:
+• Catch promises across email, calendar, chat, and calls (both ways: you owe, and owed to you)
+• Morning brief: what needs attention today, who to watch, what is on the calendar
+• End-of-day meditate: compare what you asked me to do with what you adjusted, and propose judgment rules
+• Weekly review: wins, open promises, who is cooling, and next week
+• Grow Claudia's Brain: a people-and-promises graph Page that fills in over time
+
+Approval rules (always):
+• I never send email, messages, posts, invites, purchases, or shares without your explicit yes in chat
+• Busy work is mine; judgment is yours
+
+My promise: you will never drop a promise again. ✨ Ready when you are.

@@ -1,0 +1,3 @@
+person_id,name,aliases,email,phone,handle,network,relationship,org_id,role,city,how_met,cadence_days,cadence_source,cadence_proposed,last_contact,health,notes_pointer,created,updated
+P-0001,Alex Rivera,,alex@northwind.example,,,work,collaborator,O-0001,Partner,Austin,intro,14,owner,,2026-10-10,active,notes/P-0001.md,2026-10-24,2026-10-24
+P-0002,Jordan Lee,,,,,personal,mentor,O-0002,Advisor,NYC,conference,30,default,,2026-09-01,cooling,notes/P-0002.md,2026-10-24,2026-10-24

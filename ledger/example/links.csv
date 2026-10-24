@@ -1,0 +1,3 @@
+from_id,to_id,type,basis,source
+ME,O-0001,works_at,stated,example
+P-0001,J-0001,owns,stated,example
